@@ -83,3 +83,5 @@ def update_graph(_):
 
 if __name__ == '__main__':
     app.run(debug=False, host='0.0.0.0', port=8080)
+server = app.server  # For Render deployment
+
