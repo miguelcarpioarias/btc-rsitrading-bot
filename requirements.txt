@@ -1,8 +1,13 @@
+sendgrid
+dash-bootstrap-components
 dash
+dash-bootstrap-components
 plotly
 yfinance
 pandas
 numpy
 alpaca-trade-api
+sendgrid
 gunicorn
-dash-bootstrap-components
+flask
+flask-cors
