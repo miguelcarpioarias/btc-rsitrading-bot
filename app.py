@@ -22,9 +22,9 @@ brand_colors = {
 }
 
 # === CONFIGURATION ===
-ALPACA_API_KEY = 'PKZ02G1UDCK1CFD62BUZ'
-ALPACA_SECRET_KEY = '4O0tgiK1Nua4rwe9E5GwbOg4D1h4Ds5nndYuxJSV'
-ALPACA_BASE_URL = 'https://paper-api.alpaca.markets'
+ALPACA_API_KEY = 'PK93LZQTSB35L3CL60V5'
+ALPACA_SECRET_KEY = '4O0tgiK1Nua4HDn7c1Mp3JVvgq98dphRDJH1nt3She3pe5Y9bJi0PK93LZQTSB35L3CL60V5'
+ALPACA_BASE_URL = 'https://paper-api.alpaca.markets/v2'
 SENDGRID_API_KEY = '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'
 FROM_EMAIL = 'miguelcarpioariasec@gmail.com'
 TO_EMAIL = 'miguelcarpioariasec@gmail.com'
