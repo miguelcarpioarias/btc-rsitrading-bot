@@ -95,13 +95,10 @@ def generate_signal(df, strategy, rsi_thresh):
     logging.info(f"Signal generated: {sig} at {datetime.now()}")
     return sig
 
-# Email alert (omitted for brevity)
+# Email alert (placeholder)
 def send_trade_alert(subject, content): pass
 
 # Trade execution
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
-
 def execute_trade(signal, settings):
     price = forex_df.Price.iloc[-1]
     units = -settings['qty'] if signal=='short' else settings['qty']
@@ -146,34 +143,29 @@ app.layout = dbc.Container([
                     dcc.Input(id='qty', type='number', value=1000, step=100),
                     html.Br(),
                     html.Label('Take Profit %', style={'color': brand_colors['text']}),
-                    dcc.Slider(id='tp', min=0.5, max=3, step=0.5, value=2, marks={i: str(i) for i in range(1, 4)}),
+                    dcc.Slider(id='tp', min=0.5, max=3, step=0.5, value=2),
                     html.Br(),
                     html.Label('Stop Loss %', style={'color': brand_colors['text']}),
-                    dcc.Slider(id='sl', min=0.5, max=3, step=0.5, value=1, marks={i: str(i) for i in range(1, 4)}),
+                    dcc.Slider(id='sl', min=0.5, max=3, step=0.5, value=1),
                     html.Br(),
                     html.Label('Strategy', style={'color': brand_colors['text']}),
-                    dcc.RadioItems(
-                        id='strategy',
-                        options=[
-                            {'label': 'Forecast Only', 'value': 'Forecast'},
-                            {'label': 'Forecast + RSI', 'value': 'Forecast + RSI'},
-                            {'label': 'Pattern', 'value': 'Pattern'}
-                        ],
-                        value='Pattern'
-                    ),
+                    dcc.RadioItems(id='strategy', options=[
+                        {'label': 'Forecast Only', 'value': 'Forecast'},
+                        {'label': 'Forecast + RSI', 'value': 'Forecast + RSI'},
+                        {'label': 'Pattern', 'value': 'Pattern'}
+                    ], value='Pattern'),
                     html.Br(),
                     html.Label('RSI Threshold', style={'color': brand_colors['text']}),
                     dcc.Slider(id='rsi-threshold', min=50, max=90, step=5, value=70),
                     html.Br(),
                     dbc.Button('Start Bot', id='start-btn', color='secondary')
                 ])
-            ]),
-            width=4
+            ]), width=4
         ),
         dbc.Col(dcc.Graph(id='price-chart'), width=8)
     ]),
-    dbc.Row([dbc.Col(dcc.Graph(id='pnl-chart'),width=6), dbc.Col(dcc.Graph(id='drawdown-chart'),width=6)]),
-    dbc.Row(dbc.Col(html.Div(id='position-table')),className='mt-4')
+    dbc.Row([dbc.Col(dcc.Graph(id='pnl-chart'), width=6), dbc.Col(dcc.Graph(id='drawdown-chart'), width=6)]),
+    dbc.Row(dbc.Col(html.Div(id='position-table')), className='mt-4')
 ], fluid=True)
 
 @app.callback(
@@ -190,8 +182,39 @@ def update_dash(n_clicks, n_intervals, qty, tp, sl, strategy, rsi_threshold):
     if n_clicks and trade_thread is None:
         trade_thread = threading.Thread(target=auto_trade_loop, args=(settings,), daemon=True)
         trade_thread.start()
-    # Build figures same as before...
-    return price_fig, pnl_fig, draw_fig, pos_table
+    # Build Figures
+    df = forex_df.copy()
+    price_fig = go.Figure([go.Scatter(x=df.time, y=df.Price, mode='lines', line=dict(color=brand_colors['secondary']))])
+    # Trades markers
+    if not trades_df.empty:
+        for _, t in trades_df.iterrows():
+            price_fig.add_trace(go.Scatter(x=[t['entry_time']], y=[t['entry_price']], mode='markers', marker=dict(symbol='triangle-down', color=brand_colors['accent'])))
+            price_fig.add_trace(go.Scatter(x=[t['exit_time']], y=[t['exit_price']], mode='markers', marker=dict(symbol='triangle-up', color=brand_colors['primary'])))
+    price_fig.update_layout(paper_bgcolor=brand_colors['background'], plot_bgcolor=brand_colors['background'], font_color=brand_colors['text'])
+    # P&L & Drawdown
+    pnl_fig = go.Figure(); dd_fig = go.Figure()
+    if not trades_df.empty:
+        returns = []
+        for _, row in trades_df.iterrows():
+            if row['exit_price'] is not None:
+                ret = (row['entry_price'] - row['exit_price'])/row['entry_price'] if row['side']=='short' else (row['exit_price'] - row['entry_price'])/row['entry_price']
+                returns.append(ret)
+        cum = np.cumsum(returns); draw = cum - np.maximum.accumulate(cum)
+        pnl_fig.add_trace(go.Scatter(x=trades_df['entry_time'], y=cum, mode='lines', line=dict(color=brand_colors['accent'])))
+        dd_fig.add_trace(go.Scatter(x=trades_df['entry_time'], y=draw, mode='lines', line=dict(color=brand_colors['accent'])))
+    pnl_fig.update_layout(paper_bgcolor=brand_colors['background'], plot_bgcolor=brand_colors['background'], font_color=brand_colors['text'], title='Cumulative P&L')
+    dd_fig.update_layout(paper_bgcolor=brand_colors['background'], plot_bgcolor=brand_colors['background'], font_color=brand_colors['text'], title='Drawdown')
+    # Positions Table
+    pos_resp = oanda_api.request(OpenPositions(accountID=OANDA_ACCOUNT_ID))
+    pos_data = []
+    for p in pos_resp.get('positions', []):
+        if p['instrument']=='EUR_USD':
+            units = float(p['long']['units']) + float(p['short']['units'])
+            unreal = float(p['long']['unrealizedPL']) + float(p['short']['unrealizedPL'])
+            pos_data.append({'Instrument':'EUR_USD','Units':units,'Unrealized P/L':f"${unreal:.2f}"})
+    pos_df = pd.DataFrame(pos_data) if pos_data else pd.DataFrame([{'Instrument':'None','Units':0,'Unrealized P/L':'$0'}])
+    pos_table = dbc.Table.from_dataframe(pos_df, striped=True, bordered=True, hover=True)
+    return price_fig, pnl_fig, dd_fig, pos_table
 
 if __name__=='__main__':
-    app.run(debug=False,host='0.0.0.0',port=8080)
+    app.run(debug=False, host='0.0.0.0', port=8080)
