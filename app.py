@@ -224,9 +224,9 @@ def update_dash(n_clicks, n_intervals, pair, qty, tp, sl, strategy, sf, ss):
 
 if __name__=='__main__':
     app.run(host='0.0.0.0',port=8080,debug=False)
-start_streaming()
-threading.Thread(target=streaming_worker, daemon=True).start()
-threading.Thread(target=candle_formation_worker, daemon=True).start()
-app.run_server(debug=True, use_reloader=False)
+#start_streaming()
+#threading.Thread(target=streaming_worker, daemon=True).start()
+#threading.Thread(target=candle_formation_worker, daemon=True).start()
+#app.run_server(debug=True, use_reloader=False)
     # app.run_server(debug=True, use_reloader=False)
     # app.run_server(debug=True, use_reloader=False)
