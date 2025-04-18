@@ -44,6 +44,7 @@ forex_df        = pd.DataFrame(columns=['time','Open','High','Low','Close','Pric
 trades_df       = pd.DataFrame(columns=['time','price','side','pair'])
 run_settings    = {}
 stream_started  = False
+current_candle_global = None    # <-- New global variable for current candle
 
 # Eastern timezone
 eastern = pytz.timezone('US/Eastern')
@@ -96,7 +97,7 @@ def streaming_worker():
 
 
 def candle_formation_worker():
-    global forex_df, trades_df
+    global forex_df, trades_df, current_candle_global
     current_candle = None
     while True:
         try:
@@ -105,13 +106,12 @@ def candle_formation_worker():
                 # Update or form candles
                 if current_candle is None:
                     current_candle = {
-                        'time': tick['time'].replace(second=0, microsecond=0) - timedelta(minutes=tick['time'].minute%15),
+                        'time': tick['time'].replace(second=0, microsecond=0) - timedelta(minutes=tick['time'].minute % 15),
                         'Open': tick['price'], 'High': tick['price'],
                         'Low': tick['price'], 'Close': tick['price']
                     }
                 else:
-                    # If new candle
-                    ct = tick['time'].replace(second=0,microsecond=0) - timedelta(minutes=tick['time'].minute%15)
+                    ct = tick['time'].replace(second=0, microsecond=0) - timedelta(minutes=tick['time'].minute % 15)
                     if ct > current_candle['time']:
                         row = {**current_candle}
                         row['Price'] = row['Close']
@@ -119,12 +119,16 @@ def candle_formation_worker():
                         sig = generate_signal(forex_df, run_settings)
                         if sig:
                             execute_trade(sig, run_settings)
-                        # start next
-                        current_candle = {'time':ct,'Open':tick['price'],'High':tick['price'],'Low':tick['price'],'Close':tick['price']}
+                        # Start next candle
+                        current_candle = {
+                            'time': ct, 'Open': tick['price'],
+                            'High': tick['price'], 'Low': tick['price'], 'Close': tick['price']
+                        }
                     else:
                         current_candle['High'] = max(current_candle['High'], tick['price'])
                         current_candle['Low']  = min(current_candle['Low'], tick['price'])
-                        current_candle['Close']= tick['price']
+                        current_candle['Close'] = tick['price']
+                current_candle_global = current_candle  # update the global current candle
         except queue.Empty:
             continue
 
@@ -214,6 +218,11 @@ def update_dash(n_clicks, n_intervals, pair, qty, tp, sl, strategy, sf, ss):
     # Copy data under lock
     with forex_df_lock:
         df = forex_df.copy()
+        # Include the current forming candle if available
+        if current_candle_global:
+            current = current_candle_global.copy()
+            current['Price'] = current['Close']
+            df = pd.concat([df, pd.DataFrame([current])], ignore_index=True)
         trades = trades_df[trades_df['pair'] == run_settings.get('pair', 'EUR_USD')].copy()
 
     # Handle empty data
