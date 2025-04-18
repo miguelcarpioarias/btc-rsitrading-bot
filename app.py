@@ -138,7 +138,38 @@ app.layout = dbc.Container([
     dcc.Interval(id='interval', interval=5*60*1000, n_intervals=0),
     dbc.Row(dbc.Col(html.H2('EUR/USD Pattern Bot', style={'color':brand_colors['text']}), width=12)),
     dbc.Row([
-        dbc.Col(dbc.Card([...settings card...]), width=4),
+        dbc.Col(
+            dbc.Card([
+                dbc.CardHeader('Settings'),
+                dbc.CardBody([
+                    html.Label('Quantity', style={'color': brand_colors['text']}),
+                    dcc.Input(id='qty', type='number', value=1000, step=100),
+                    html.Br(),
+                    html.Label('Take Profit %', style={'color': brand_colors['text']}),
+                    dcc.Slider(id='tp', min=0.5, max=3, step=0.5, value=2, marks={i: str(i) for i in range(1, 4)}),
+                    html.Br(),
+                    html.Label('Stop Loss %', style={'color': brand_colors['text']}),
+                    dcc.Slider(id='sl', min=0.5, max=3, step=0.5, value=1, marks={i: str(i) for i in range(1, 4)}),
+                    html.Br(),
+                    html.Label('Strategy', style={'color': brand_colors['text']}),
+                    dcc.RadioItems(
+                        id='strategy',
+                        options=[
+                            {'label': 'Forecast Only', 'value': 'Forecast'},
+                            {'label': 'Forecast + RSI', 'value': 'Forecast + RSI'},
+                            {'label': 'Pattern', 'value': 'Pattern'}
+                        ],
+                        value='Pattern'
+                    ),
+                    html.Br(),
+                    html.Label('RSI Threshold', style={'color': brand_colors['text']}),
+                    dcc.Slider(id='rsi-threshold', min=50, max=90, step=5, value=70),
+                    html.Br(),
+                    dbc.Button('Start Bot', id='start-btn', color='secondary')
+                ])
+            ]),
+            width=4
+        ),
         dbc.Col(dcc.Graph(id='price-chart'), width=8)
     ]),
     dbc.Row([dbc.Col(dcc.Graph(id='pnl-chart'),width=6), dbc.Col(dcc.Graph(id='drawdown-chart'),width=6)]),
