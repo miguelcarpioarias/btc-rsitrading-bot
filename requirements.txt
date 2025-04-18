@@ -12,3 +12,9 @@ flask
 flask-cors
 flask-socketio
 v20
+yfinance
+pandas_ta
+matplotlib
+numpy-financial
+pandas_market_calendars
+pandas-datareader
