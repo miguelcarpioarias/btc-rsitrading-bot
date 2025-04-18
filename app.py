@@ -191,42 +191,93 @@ app.layout = dbc.Container([
 ], fluid=True, style={'backgroundColor':brand_colors['background']})
 
 @app.callback(
-    Output('price-chart','figure'), Output('pnl-chart','figure'), Output('drawdown-chart','figure'), Output('trades-table','data'),
-    Input('start-btn','n_clicks'), Input('interval','n_intervals'),
-    Input('pair','value'), Input('qty','value'), Input('tp','value'), Input('sl','value'),
-    Input('strategy','value'), Input('sma-fast','value'), Input('sma-slow','value')
+    Output('price-chart', 'figure'),
+    Output('pnl-chart', 'figure'),
+    Output('drawdown-chart', 'figure'),
+    Output('trades-table', 'data'),
+    Input('start-btn', 'n_clicks'),
+    Input('interval', 'n_intervals'),
+    Input('pair', 'value'),
+    Input('qty', 'value'),
+    Input('tp', 'value'),
+    Input('sl', 'value'),
+    Input('strategy', 'value'),
+    Input('sma-fast', 'value'),
+    Input('sma-slow', 'value')
 )
 def update_dash(n_clicks, n_intervals, pair, qty, tp, sl, strategy, sf, ss):
-    global run_settings
-    run_settings.update({'pair':pair,'qty':qty,'tp':tp/100,'sl':sl/100,'strategy':strategy,'sma_fast':sf,'sma_slow':ss})
+    # Kick off streaming on first click
+    run_settings.update({'pair': pair, 'qty': qty, 'tp': tp/100, 'sl': sl/100,
+                         'strategy': strategy, 'sma_fast': sf, 'sma_slow': ss})
     start_streaming()
+
+    # Copy data under lock
     with forex_df_lock:
         df = forex_df.copy()
-    # Candlestick chart
-    fig = go.Figure(data=[go.Candlestick(x=df.time, open=df.Open, high=df.High, low=df.Low, close=df.Close)])
-    if strategy=='SMA':
-        fig.add_trace(go.Scatter(x=df.time, y=df.Price.rolling(sf).mean(), name='SMA Fast', line=dict(color='#FFFF00')))
-        fig.add_trace(go.Scatter(x=df.time, y=df.Price.rolling(ss).mean(), name='SMA Slow', line=dict(color='#FFA500')))
-    trades = trades_df[trades_df.pair==pair]
-    for _,r in trades.iterrows():
-        fig.add_trace(go.Scatter(x=[r.time],y=[r.price],mode='markers',marker=dict(color=brand_colors['accent'],size=10)))
-    fig.update_layout(xaxis_title='Time (EST)', paper_bgcolor=brand_colors['background'],plot_bgcolor=brand_colors['background'],font_color=brand_colors['text'])
-    # P&L and drawdown plots
-    pnl = go.Figure(); dd=go.Figure()
-    for _,t in trades.iterrows():
-        series=(t.price- df.Price)/t.price if t.side=='short' else (df.Price-t.price)/t.price
-        pnl.add_trace(go.Scatter(x=df.time,y=series,mode='lines',name=str(t.time)))
-        dd.add_trace(go.Scatter(x=df.time,y=series-series.cummax(),mode='lines',name=str(t.time)))
-    pnl.update_layout(title='Unrealized P&L',paper_bgcolor=brand_colors['background'],plot_bgcolor=brand_colors['background'],font_color=brand_colors['text'])
-    dd.update_layout(title='Drawdown',paper_bgcolor=brand_colors['background'],plot_bgcolor=brand_colors['background'],font_color=brand_colors['text'])
-    data = trades.to_dict('records')
-    return fig, pnl, dd, data
+        trades = trades_df[trades_df['pair'] == run_settings.get('pair', 'EUR_USD')].copy()
+
+    # Handle empty data
+    empty_fig = go.Figure()
+    if df.empty:
+        return empty_fig, empty_fig, empty_fig, []
+
+    # Base candlestick chart
+    price_fig = go.Figure(data=[
+        go.Candlestick(
+            x=df['time'],
+            open=df['Open'],
+            high=df['High'],
+            low=df['Low'],
+            close=df['Close'],
+            name=run_settings.get('pair', 'EUR_USD')
+        )
+    ])
+
+    # SMA overlays
+    if run_settings.get('strategy') == 'SMA':
+        price_fig.add_trace(go.Scatter(
+            x=df['time'],
+            y=df['Price'].rolling(window=sf).mean(),
+            name='SMA Fast',
+            line=dict(color='#00FF00')
+        ))
+        price_fig.add_trace(go.Scatter(
+            x=df['time'],
+            y=df['Price'].rolling(window=ss).mean(),
+            name='SMA Slow',
+            line=dict(color='#FF0000')
+        ))
+
+    # Trade markers
+    if not trades.empty:
+        for _, trade in trades.iterrows():
+            price_fig.add_trace(go.Scatter(
+                x=[trade['time']],
+                y=[trade['price']],
+                mode='markers',
+                marker=dict(
+                    color='#FFA500' if trade['side'] == 'long' else '#00FFFF',
+                    size=12,
+                    symbol='triangle-up' if trade['side'] == 'long' else 'triangle-down'
+                ),
+                name=f"{trade['side'].capitalize()} Signal"
+            ))
+
+    price_fig.update_layout(
+        xaxis_rangeslider_visible=False,
+        paper_bgcolor=brand_colors['background'],
+        plot_bgcolor=brand_colors['background'],
+        font_color=brand_colors['text']
+    )
+
+    # Placeholder: P&L and Drawdown (implement as needed)
+    pnl_fig = go.Figure()
+    dd_fig = go.Figure()
+
+    # Convert trades to table data
+    table_data = trades.to_dict('records')
+
+    return price_fig, pnl_fig, dd_fig, table_data
 
 if __name__=='__main__':
     app.run(host='0.0.0.0',port=8080,debug=False)
-#start_streaming()
-#threading.Thread(target=streaming_worker, daemon=True).start()
-#threading.Thread(target=candle_formation_worker, daemon=True).start()
-#app.run_server(debug=True, use_reloader=False)
-    # app.run_server(debug=True, use_reloader=False)
-    # app.run_server(debug=True, use_reloader=False)
