@@ -128,6 +128,7 @@ def candle_formation_worker():
                         current_candle['High'] = max(current_candle['High'], tick['price'])
                         current_candle['Low']  = min(current_candle['Low'], tick['price'])
                         current_candle['Close'] = tick['price']
+                        logging.info(f"Updated candle: {current_candle}")
                 current_candle_global = current_candle  # update the global current candle
         except queue.Empty:
             continue
