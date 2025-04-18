@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from oandapyV20 import API
 import oandapyV20.endpoints.orders as orders
 from oandapyV20.contrib.requests import MarketOrderRequest, TakeProfitDetails, StopLossDetails
-from oandapyV20.contrib.requests import TradeCandleRequest
+from oandapyV20.endpoints.instruments import InstrumentsCandles
 from oandapyV20.endpoints.positions import OpenPositions
 
 # === BRAND PALETTE ===
@@ -32,7 +32,7 @@ FROM_EMAIL = 'miguelcarpioariasec@gmail.com'
 TO_EMAIL = 'miguelcarpioariasec@gmail.com'
 
 # === GLOBAL STATE ===
-forex_df = pd.DataFrame(columns=['Price'])
+forex_df = pd.DataFrame(columns=['Price', 'Open', 'High', 'Low', 'time'])
 trades_df = pd.DataFrame(columns=['entry_time','entry_price','exit_time','exit_price','side'])
 run_settings = {}
 trade_thread = None
@@ -43,7 +43,8 @@ oanda_api = API(access_token=OANDA_TOKEN)
 # === HELPER FUNCTIONS ===
 def get_candles(count=3):
     """Fetch last `count` 15-minute candles for EUR_USD"""
-    req = TradeCandleRequest(instrument="EUR_USD", params={"count": count, "granularity": "M15"})
+    params = {"count": count, "granularity": "M15"}
+    req = InstrumentsCandles(instrument="EUR_USD", params=params)
     resp = oanda_api.request(req)
     candles = resp.get('candles', [])
     df = pd.DataFrame([{
@@ -98,7 +99,8 @@ from sendgrid.helpers.mail import Mail
 
 def send_trade_alert(subject, content):
     sg = SendGridAPIClient(sendgrid_api_key)
-    msg = Mail(from_email=FROM_EMAIL, to_emails=TO_EMAIL, subject=subject, plain_text_content=content)
+    msg = Mail(from_email=FROM_EMAIL, to_emails=TO_EMAIL,
+               subject=subject, plain_text_content=content)
     try:
         sg.send(msg)
     except Exception as e:
@@ -146,24 +148,22 @@ server = app.server
 app.layout = dbc.Container([
     dbc.Row(dbc.Col(html.H2('EUR/USD Pattern Bot', style={'color': brand_colors['text']}), width=12), align='center'),
     dbc.Row([
-        dbc.Col(dbc.Card([
-            dbc.CardHeader('Settings'), dbc.CardBody([
-                html.Label('Quantity', style={'color': brand_colors['text']}),
-                dcc.Input(id='qty', type='number', value=1000, step=100),
-                html.Br(), html.Label('Take Profit %', style={'color': brand_colors['text']}),
-                dcc.Slider(id='tp', min=0.5, max=3, step=0.5, value=2, marks={i: str(i) for i in range(1, 4)}),
-                html.Br(), html.Label('Stop Loss %', style={'color': brand_colors['text']}),
-                dcc.Slider(id='sl', min=0.5, max=3, step=0.5, value=1, marks={i: str(i) for i in range(1, 4)}),
-                html.Br(), html.Label('Strategy', style={'color': brand_colors['text']}),
-                dcc.RadioItems(id='strategy', options=[
-                    {'label': 'Forecast Only', 'value': 'Forecast'},
-                    {'label': 'Forecast + RSI', 'value': 'Forecast + RSI'},
-                    {'label': 'Pattern', 'value': 'Pattern'}], value='Pattern'),
-                html.Br(), html.Label('RSI Threshold', style={'color': brand_colors['text']}),
-                dcc.Slider(id='rsi-threshold', min=50, max=90, step=5, value=70),
-                html.Br(), dbc.Button('Start Bot', id='start-btn', color='secondary')
-            ])
-        ]), width=4),
+        dbc.Col(dbc.Card([dbc.CardHeader('Settings'), dbc.CardBody([
+            html.Label('Quantity', style={'color': brand_colors['text']}),
+            dcc.Input(id='qty', type='number', value=1000, step=100),
+            html.Br(), html.Label('Take Profit %', style={'color': brand_colors['text']}),
+            dcc.Slider(id='tp', min=0.5, max=3, step=0.5, value=2),
+            html.Br(), html.Label('Stop Loss %', style={'color': brand_colors['text']}),
+            dcc.Slider(id='sl', min=0.5, max=3, step=0.5, value=1),
+            html.Br(), html.Label('Strategy', style={'color': brand_colors['text']}),
+            dcc.RadioItems(id='strategy', options=[
+                {'label': 'Forecast Only', 'value': 'Forecast'},
+                {'label': 'Forecast + RSI', 'value': 'Forecast + RSI'},
+                {'label': 'Pattern', 'value': 'Pattern'}], value='Pattern'),
+            html.Br(), html.Label('RSI Threshold', style={'color': brand_colors['text']}),
+            dcc.Slider(id='rsi-threshold', min=50, max=90, step=5, value=70),
+            html.Br(), dbc.Button('Start Bot', id='start-btn', color='secondary')
+        ])]), width=4),
         dbc.Col(dcc.Graph(id='price-chart'), width=8)
     ]),
     dbc.Row([dbc.Col(dcc.Graph(id='pnl-chart'), width=6), dbc.Col(dcc.Graph(id='drawdown-chart'), width=6)]),
@@ -192,13 +192,13 @@ def update_dash(n, qty, tp, sl, strategy, rsi_threshold):
         pnl = []
         for _, row in trades_df.iterrows():
             entry, exit_price = row.entry_price, forex_df.Price.iloc[-1]
-            ret = (entry - exit_price) / entry if row.side == 'short' else (exit_price - entry) / entry
+            ret = ((entry - exit_price)/entry) if row.side == 'short' else ((exit_price - entry)/entry)
             pnl.append(ret)
         cum = np.cumsum(pnl); draw = cum - np.maximum.accumulate(cum)
         pnl_fig.add_trace(go.Scatter(x=trades_df.entry_time, y=cum, mode='lines', line=dict(color=brand_colors['accent'])))
         dd_fig.add_trace(go.Scatter(x=trades_df.entry_time, y=draw, mode='lines', line=dict(color=brand_colors['accent'])))
-    pos_data = []
     pos_resp = oanda_api.request(OpenPositions(OANDA_ACCOUNT_ID))
+    pos_data = []
     for p in pos_resp.get('positions', []):
         if p['instrument'] == 'EUR_USD':
             units = float(p['long']['units']) + float(p['short']['units'])
