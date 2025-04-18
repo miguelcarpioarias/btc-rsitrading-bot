@@ -35,7 +35,13 @@ sendgrid_api_key = 'SG.ibRBcjeKRwiTObgGWmuHbQ.A1zJwpKraeBart37naJQ_yC2b3lc-uawHf
 FROM_EMAIL = 'miguelcarpioariasec@gmail.com'
 TO_EMAIL = 'miguelcarpioariasec@gmail.com'
 
-oanda_api = API(access_token=OANDA_TOKEN)
+# Initialize OANDA API client for practice
+# Set environment to 'practice' for paper trading
+from oandapyV20 import API as OandaAPI
+
+# Instantiate with practice environment
+# This ensures requests go to the practice (paper) endpoints
+api_client = OandaAPI(access_token=OANDA_TOKEN, environment="practice")
 
 # Global state
 forex_df = pd.DataFrame(columns=['time','Open','High','Low','Close','Price'])
