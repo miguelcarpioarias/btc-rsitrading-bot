@@ -106,12 +106,13 @@ def execute_trade(side, settings):
     ).data
     req = orders.OrderCreate(accountID=OANDA_ACCOUNT, data=data)
     api_client.request(req)
-    trades_df = trades_df.append({
+    new_trade = pd.DataFrame([{
         'time': datetime.now().astimezone(eastern),
         'price': price,
         'side': side,
         'pair': settings['pair']
-    }, ignore_index=True)
+    }])
+    trades_df = pd.concat([trades_df, new_trade], ignore_index=True)
     logging.info(f"Trade {side}@{price} ({settings['pair']}), TP={tp}, SL={sl}")
 
 # Background loop reads run_settings
@@ -187,8 +188,11 @@ def update_dash(n_clicks, n_intervals, pair, qty, tp, sl, strat, sf, ss):
         go.Candlestick(x=df.time, open=df.Open, high=df.High, low=df.Low, close=df.Close, name=pair)
     ])
     if strat == 'SMA':
-        price_fig.add_trace(go.Scatter(x=df.time, y=df.Price.rolling(window=sf).mean(), mode='lines', name='SMA Fast', line=dict(color='#FFFF00')))
-        price_fig.add_trace(go.Scatter(x=df.time, y=df.Price.rolling(window=ss).mean(), mode='lines', name='SMA Slow', line=dict(color='#FFA500')))
+        # Precompute SMAs to avoid recalculating inside each add_trace call
+        sma_fast = df.Price.rolling(window=sf).mean()
+        sma_slow = df.Price.rolling(window=ss).mean()
+        price_fig.add_trace(go.Scatter(x=df.time, y=sma_fast, mode='lines', name='SMA Fast', line=dict(color='#FFFF00')))
+        price_fig.add_trace(go.Scatter(x=df.time, y=sma_slow, mode='lines', name='SMA Slow', line=dict(color='#FFA500')))
     # Trade markers
     trades = trades_df[trades_df.pair == pair]
     for _, r in trades.iterrows():
