@@ -115,7 +115,7 @@ def candle_formation_worker():
                     if ct > current_candle['time']:
                         row = {**current_candle}
                         row['Price'] = row['Close']
-                        forex_df = pd.concat([forex_df, pd.DataFrame([row])], ignore_index=True)
+                        forex_df = pd.concat([forex_df, pd.DataFrame([row]).dropna(axis=1, how='all')], ignore_index=True)
                         sig = generate_signal(forex_df, run_settings)
                         if sig:
                             execute_trade(sig, run_settings)
@@ -222,7 +222,7 @@ def update_dash(n_clicks, n_intervals, pair, qty, tp, sl, strategy, sf, ss):
         if current_candle_global:
             current = current_candle_global.copy()
             current['Price'] = current['Close']
-            df = pd.concat([df, pd.DataFrame([current])], ignore_index=True)
+            df = pd.concat([df, pd.DataFrame([current]).dropna(axis=1, how='all')], ignore_index=True)
         trades = trades_df[trades_df['pair'] == run_settings.get('pair', 'EUR_USD')].copy()
 
     # Handle empty data
