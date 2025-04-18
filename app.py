@@ -1,6 +1,6 @@
 import dash
 import dash_bootstrap_components as dbc
-from dash import dcc, html, Input, Output, dash_table
+from dash import dcc, html, Input, Output, State, dash_table
 import plotly.graph_objs as go
 import pandas as pd
 import numpy as np
@@ -37,6 +37,9 @@ def backtest(pair, tp, sl, strategy, fast, slow):
     ticker = {'EUR_USD':'EURUSD=X', 'AUD_USD':'AUDUSD=X'}[pair]
     hist = yf.download(ticker, period='6mo', interval='15m')
     hist = hist.reset_index()
+    # Normalize column name from yfinance for time
+    hist.rename(columns={hist.columns[0]: 'time'}, inplace=True)
+    hist['Price'] = hist['Close']
     hist['Price'] = hist['Close']
     cash = 10000.0
     position = 0
@@ -98,17 +101,18 @@ app.layout = dbc.Container([
 ], fluid=True)
 
 @app.callback(
-    [Output('bt-price-chart','figure'), Output('bt-metrics','children')],
-    [Input('bt-run','n_clicks')],
-    [dash.dependencies.State('bt-pair','value'),
-     dash.dependencies.State('bt-tp','value'),
-     dash.dependencies.State('bt-sl','value'),
-     dash.dependencies.State('bt-strategy','value'),
-     dash.dependencies.State('bt-sf','value'),
-     dash.dependencies.State('bt-ss','value')]
+    Output('bt-price-chart','figure'),
+    Output('bt-metrics','children'),
+    Input('bt-run','n_clicks'),
+    State('bt-pair','value'),
+    State('bt-tp','value'),
+    State('bt-sl','value'),
+    State('bt-strategy','value'),
+    State('bt-sf','value'),
+    State('bt-ss','value')
 )
-def run_backtest(n, pair, tp, sl, strategy, sf, ss):
-    if not n:
+def run_backtest(n_clicks, pair, tp, sl, strategy, sf, ss):
+    if not n_clicks:
         return go.Figure(), ''
 
     hist, trades, eq = backtest(pair, tp/100, sl/100, strategy, sf, ss)
