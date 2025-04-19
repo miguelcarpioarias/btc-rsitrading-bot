@@ -80,30 +80,32 @@ def rsi_trading_job():
 
         # Determine flat vs in-position
         positions = trade_client.get_all_positions()
-        # Normalize symbol for comparison (e.g. 'BTC/USD' -> 'BTCUSD')
         clean_symbol = ALPACA_SYMBOL.replace('/', '')
         in_pos = any(p.symbol == clean_symbol and float(p.qty) > 0 for p in positions)
 
-        # Buy signal
+        # For sell orders, use current BTC balance; for buy orders, you might need to check USD buying power.
         if last_rsi <= 30 and not in_pos:
-            logging.info("RSI <=30; sending market BUY 0.5 BTC")
+            logging.info("RSI <=30; sending market BUY order")
+            # For buy orders, you might wish to specify notional rather than qty,
+            # or adjust qty based on USD balance.
             mo = MarketOrderRequest(
                 symbol=ALPACA_SYMBOL,
                 side=OrderSide.BUY,
                 type=OrderType.MARKET,
                 time_in_force=TimeInForce.GTC,
-                qty=0.5
+                qty=0.5  # Adjust this if needed based on your USD balance
             )
             trade_client.submit_order(order_data=mo)
-        # Sell signal
         elif last_rsi >= 70 and in_pos:
-            logging.info("RSI >=70; sending market SELL 0.5 BTC")
+            logging.info("RSI >=70; sending market SELL order")
+            available = float(positions[0].qty) if positions else 0.0
+            order_qty = min(0.5, available)  # Use the lesser of the desired amount and available BTC.
             mo = MarketOrderRequest(
                 symbol=ALPACA_SYMBOL,
                 side=OrderSide.SELL,
                 type=OrderType.MARKET,
                 time_in_force=TimeInForce.GTC,
-                qty=0.5
+                qty=order_qty
             )
             trade_client.submit_order(order_data=mo)
         else:
