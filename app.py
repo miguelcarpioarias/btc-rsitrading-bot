@@ -133,50 +133,32 @@ app.layout = dbc.Container([
 
 # --- Callbacks ---
 @app.callback(
-    Output('price-chart','figure'), Input('interval','n_intervals')
-)
-def update_price(n):
-    now = datetime.utcnow()
-    req = CryptoBarsRequest(
-        symbol_or_symbols=[SYMBOL], timeframe=TimeFrame(1, TimeFrameUnit.Minute),
-        start=now - timedelta(hours=1), limit=60
-    )
-    df = data_client.get_crypto_bars(req).df.reset_index()
-    fig = go.Figure(data=[
-        go.Candlestick(x=df['timestamp'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], name=SYMBOL)
-    ])
-    fig.update_layout(paper_bgcolor=brand_colors['background'], plot_bgcolor=brand_colors['background'], font_color=brand_colors['text'], xaxis_rangeslider_visible=False)
-    return fig
-
-@app.callback(
-    Output('order-status','children'),
-    Input('buy-btc','n_clicks'), Input('sell-btc','n_clicks'), State('btc-qty','value')
-)
-def execute_order(buy, sell, qty):
-    ctx = callback_context.triggered_id
-    if not ctx: return ''
-    side = OrderSide.BUY if ctx=='buy-btc' else OrderSide.SELL
-    mo = MarketOrderRequest(symbol=SYMBOL, side=side, type=OrderType.MARKET, time_in_force=TimeInForce.GTC, qty=qty)
-    try:
-        resp = trade_client.submit_order(order_data=mo)
-        return f"✅ Order {resp.id} submitted (filled_qty={resp.filled_qty})"
-    except Exception as e:
-        return f"❌ Order failed: {e}"
-
-@app.callback(
     Output('positions-table','data'), Output('positions-table','columns'),
     Input('interval','n_intervals')
 )
 def update_positions(n):
-    positions = trade_client.get_all_positions()
-    rows=[{'Symbol':'None','Qty':0,'Unrealized P/L':0,'Market Value':0}]
-    if positions:
-        rows=[]
-        for p in positions:
-            if p.symbol==SYMBOL:
-                rows.append({'Symbol':p.symbol,'Qty':p.qty,'Unrealized P/L':p.unrealized_pl,'Market Value':p.market_value})
-    cols=[{'name':c,'id':c} for c in rows[0].keys()]
-    return rows, cols
+    # Safely fetch open positions
+    positions = []
+    try:
+        positions = trade_client.get_all_positions() or []
+    except:
+        positions = []
+
+    rows = []
+    for p in positions:
+        if p.symbol == SYMBOL:
+            rows.append({
+                'Symbol': p.symbol,
+                'Qty': p.qty,
+                'Unrealized P/L': p.unrealized_pl,
+                'Market Value': p.market_value
+            })
+    # Fallback if no positions
+    if not rows:
+        rows = [{'Symbol': 'None', 'Qty': 0, 'Unrealized P/L': 0, 'Market Value': 0}]
+    # Build columns list
+    columns = [{'name': col, 'id': col} for col in rows[0].keys()]
+    return rows, columns
 
 @app.callback(
     Output('orders-table','data'), Output('orders-table','columns'),
