@@ -52,7 +52,7 @@ def start_trade_stream():
     stream.subscribe_trade_updates(trade_updates_handler)
     stream.run()
 
-threading.Thread(target=start_trade_stream, daemon=True).start()(target=start_trade_stream, daemon=True).start()
+threading.Thread(target=start_trade_stream, daemon=True).start()
 
 # --- RSI Computation & Trading Job ---
 def compute_rsi(series, window=14):
