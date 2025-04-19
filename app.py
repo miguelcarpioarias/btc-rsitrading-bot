@@ -8,6 +8,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
+import logging
 
 # Alpaca clients
 from alpaca.trading.client import TradingClient
@@ -25,6 +26,9 @@ trade_client = TradingClient(API_KEY, API_SECRET, paper=True)
 
 data_client = CryptoHistoricalDataClient()
 SYMBOL = 'BTC/USD'
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
 
 # --- Streaming Order Updates ---
 trade_updates_list = []
@@ -61,9 +65,10 @@ def compute_rsi(series, window=14):
     loss = -delta.where(delta < 0, 0.0)
     avg_gain = gain.rolling(window).mean()
     avg_loss = loss.rolling(window).mean()
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
-
+    # Prevent division by zero with a small epsilon
+    rs = avg_gain / (avg_loss + 1e-10)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
 
 def rsi_trading_job():
     try:
@@ -79,10 +84,13 @@ def rsi_trading_job():
         df['close'] = df['close'].astype(float)
         df['rsi'] = compute_rsi(df['close'], window=14)
         last_rsi = df['rsi'].iloc[-1]
+        logging.info(f"RSI computed: {last_rsi}")
+
         positions = trade_client.get_all_positions()
         flat = not any(p.symbol.replace('/','') == SYMBOL.replace('/','') and float(p.qty) > 0 for p in positions)
-        # When RSI <= 30: buy 0.5 BTC at market
+        
         if last_rsi <= 30 and flat:
+            logging.info("RSI <= 30 and no position; trying to buy 0.5 BTC")
             mo = MarketOrderRequest(
                 symbol=SYMBOL,
                 side=OrderSide.BUY,
@@ -91,8 +99,8 @@ def rsi_trading_job():
                 qty=0.5
             )
             trade_client.submit_order(order_data=mo)
-        # When RSI >= 70: sell 0.5 BTC at market
         elif last_rsi >= 70 and not flat:
+            logging.info("RSI >= 70 and position exists; trying to sell 0.5 BTC")
             mo = MarketOrderRequest(
                 symbol=SYMBOL,
                 side=OrderSide.SELL,
@@ -101,8 +109,10 @@ def rsi_trading_job():
                 qty=0.5
             )
             trade_client.submit_order(order_data=mo)
+        else:
+            logging.info("No RSI trigger and no action taken.")
     except Exception as e:
-        print(f"RSI trading job error: {e}")
+        logging.error(f"RSI trading job error: {e}")
 
 # Schedule RSI job every minute
 scheduler = BackgroundScheduler(timezone='US/Eastern')
@@ -142,19 +152,30 @@ app.layout = dbc.Container([
 
 # --- Callbacks ---
 @app.callback(
-    Output('price-chart','figure'), Input('interval','n_intervals')
+    Output('price-chart','figure'),
+    Input('interval','n_intervals')
 )
 def update_price(n):
-    now = datetime.utcnow()
+    # Use Eastern Time for price updates
+    now_et = datetime.now(ZoneInfo("America/New_York"))
     req = CryptoBarsRequest(
-        symbol_or_symbols=[SYMBOL], timeframe=TimeFrame(1, TimeFrameUnit.Minute),
-        start=now - timedelta(hours=1), limit=60
+        symbol_or_symbols=[SYMBOL],
+        timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+        start=now_et - timedelta(hours=1), limit=60
     )
     df = data_client.get_crypto_bars(req).df.reset_index()
     fig = go.Figure(data=[
-        go.Candlestick(x=df['timestamp'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], name=SYMBOL)
+        go.Candlestick(
+            x=df['timestamp'], open=df['open'], high=df['high'],
+            low=df['low'], close=df['close'], name=SYMBOL
+        )
     ])
-    fig.update_layout(paper_bgcolor=brand_colors['background'], plot_bgcolor=brand_colors['background'], font_color=brand_colors['text'], xaxis_rangeslider_visible=False)
+    fig.update_layout(
+        paper_bgcolor=brand_colors['background'],
+        plot_bgcolor=brand_colors['background'],
+        font_color=brand_colors['text'],
+        xaxis_rangeslider_visible=False
+    )
     return fig
 
 @app.callback(
