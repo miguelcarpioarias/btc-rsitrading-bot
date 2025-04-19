@@ -83,33 +83,38 @@ def rsi_trading_job():
         clean_symbol = ALPACA_SYMBOL.replace('/', '')
         in_pos = any(p.symbol == clean_symbol and float(p.qty) > 0 for p in positions)
 
-        # For sell orders, use current BTC balance; for buy orders, you might need to check USD buying power.
+        account = trade_client.get_account()
+        usd_avail = float(account.cash)
+
         if last_rsi <= 30 and not in_pos:
-            logging.info("RSI <=30; sending market BUY order")
-            # For buy orders, you might wish to specify notional rather than qty,
-            # or adjust qty based on USD balance.
+            logging.info("RSI <=30; placing BUY")
+            # compute how much BTC you can buy with, say, up to $100 USD
+            target_usd = min(100, usd_avail)
             mo = MarketOrderRequest(
                 symbol=ALPACA_SYMBOL,
                 side=OrderSide.BUY,
                 type=OrderType.MARKET,
                 time_in_force=TimeInForce.GTC,
-                qty=0.5  # Adjust this if needed based on your USD balance
+                notional=target_usd
             )
             trade_client.submit_order(order_data=mo)
+
         elif last_rsi >= 70 and in_pos:
-            logging.info("RSI >=70; sending market SELL order")
-            available = float(positions[0].qty) if positions else 0.0
-            order_qty = min(0.5, available)  # Use the lesser of the desired amount and available BTC.
+            logging.info("RSI >=70; placing SELL")
+            positions = trade_client.get_all_positions()
+            available_btc = float(positions[0].qty) if positions else 0.0
+            sell_qty = round(min(0.5, available_btc) - 1e-8, 8)  # small epsilon to avoid precision errors
             mo = MarketOrderRequest(
                 symbol=ALPACA_SYMBOL,
                 side=OrderSide.SELL,
                 type=OrderType.MARKET,
                 time_in_force=TimeInForce.GTC,
-                qty=order_qty
+                qty=sell_qty
             )
             trade_client.submit_order(order_data=mo)
+
         else:
-            logging.info("No RSI trade signal or already in correct state.")
+            logging.info("No trade signal")
     except Exception as e:
         logging.error(f"RSI trading job error: {e}")
 
