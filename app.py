@@ -17,8 +17,8 @@ from alpaca.data.requests import CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 # --- Configuration ---
-API_KEY    = os.getenv('ALPACA_API_KEY')
-API_SECRET = os.getenv('ALPACA_SECRET_KEY')
+API_KEY    = os.getenv('PK93LZQTSB35L3CL60V5')
+API_SECRET = os.getenv('HDn7c1Mp3JVvgq98dphRDJH1nt3She3pe5Y9bJi0')
 if not (API_KEY and API_SECRET):
     raise RuntimeError('Set ALPACA_API_KEY and ALPACA_SECRET_KEY in environment')
 # Initialize trading and data clients
