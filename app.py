@@ -73,6 +73,7 @@ def rsi_trading_job():
             auto_adjust=False,
             progress=False
         )
+        df['Open', 'High', 'Low', 'Close'].head()
         df.index = pd.to_datetime(df.index)
         if df.index.tzinfo is None:
             df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
