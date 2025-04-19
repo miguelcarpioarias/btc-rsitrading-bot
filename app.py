@@ -67,7 +67,7 @@ def rsi_trading_job():
     try:
         # Fetch last 60 one-minute bars via yfinance
         ticker = yf.Ticker(YF_SYMBOL)
-        df = ticker.history(interval="1m", period="1d", auto_adjust=True)
+        df = ticker.history(interval="1m", period="1d", auto_adjust=False)
         df.index = pd.to_datetime(df.index)
         if df.index.tzinfo is None:
             df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
@@ -75,6 +75,7 @@ def rsi_trading_job():
             df.index = df.index.tz_convert('America/New_York')
         df['Close'] = df['Close'].astype(float)
         df['RSI'] = compute_rsi(df['Close'], window=14)
+        print(df[['Open','High','Low','Close']].head(10))
         last_rsi = df['RSI'].iloc[-1]
         logging.info(f"RSI(1m)={last_rsi:.2f}")
 
@@ -161,7 +162,7 @@ app.layout = dbc.Container([
 )
 def update_price(n):
     ticker = yf.Ticker(YF_SYMBOL)
-    df = ticker.history(interval="1m", period="1d", auto_adjust=True)
+    df = ticker.history(interval="1m", period="1d", auto_adjust=False)
     df.index = pd.to_datetime(df.index)
     if df.index.tzinfo is None:
         df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
@@ -186,7 +187,7 @@ def update_price(n):
 )
 def update_rsi_chart(n):
     ticker = yf.Ticker(YF_SYMBOL)
-    df = ticker.history(interval="1m", period="1d", auto_adjust=True)
+    df = ticker.history(interval="1m", period="1d", auto_adjust=False)
     df.index = pd.to_datetime(df.index)
     if df.index.tzinfo is None:
         df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
