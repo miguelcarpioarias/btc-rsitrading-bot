@@ -82,7 +82,7 @@ def rsi_trading_job():
         positions = trade_client.get_all_positions()
         # Normalize symbol for comparison (e.g. 'BTC/USD' -> 'BTCUSD')
         clean_symbol = ALPACA_SYMBOL.replace('/', '')
-        in_pos = any(p.symbol == clean_symbol and float(p.qty) > 0 for p in positions)(p.symbol == ALPACA_SYMBOL and float(p.qty) > 0 for p in positions)
+        in_pos = any(p.symbol == clean_symbol and float(p.qty) > 0 for p in positions)
 
         # Buy signal
         if last_rsi <= 30 and not in_pos:
