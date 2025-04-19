@@ -160,8 +160,9 @@ app.layout = dbc.Container([
 def update_price(n):
     now_et = datetime.now(ZoneInfo("America/New_York"))
     ticker = yf.Ticker("BTC-USD")
-    df = ticker.history(interval="1m", period="1h").reset_index()
-    # Use 'Date' column instead of 'Datetime' (if that’s what is returned)
+    # Fetch 1-day minute data so that the window shifts as time passes
+    df = ticker.history(interval="1m", period="1d").reset_index()
+    # Determine the proper time column name
     date_col = 'Date' if 'Date' in df.columns else 'Datetime'
     fig = go.Figure(data=[
         go.Candlestick(
@@ -184,12 +185,13 @@ def update_price(n):
 
 @app.callback(
     Output('rsi-chart', 'figure'),
-    Input('interval', 'n_intervals')
+    Input('interval','n_intervals')
 )
 def update_rsi_chart(n):
     now_et = datetime.now(ZoneInfo("America/New_York"))
     ticker = yf.Ticker("BTC-USD")
-    df = ticker.history(interval="1m", period="1h").reset_index()
+    # Use full day of 1-minute data; as a new minute arrives, the oldest candle is dropped
+    df = ticker.history(interval="1m", period="1d").reset_index()
     date_col = 'Date' if 'Date' in df.columns else 'Datetime'
     df['Close'] = df['Close'].astype(float)
     df['rsi'] = compute_rsi(df['Close'], window=14)
