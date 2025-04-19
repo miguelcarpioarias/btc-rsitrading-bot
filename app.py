@@ -81,8 +81,8 @@ def rsi_trading_job():
         last_rsi = df['rsi'].iloc[-1]
         positions = trade_client.get_all_positions()
         flat = not any(p.symbol.replace('/','') == SYMBOL.replace('/','') and float(p.qty) > 0 for p in positions)
-        # When RSI < 30: buy 0.5 BTC at market
-        if last_rsi < 30 and flat:
+        # When RSI <= 30: buy 0.5 BTC at market
+        if last_rsi <= 30 and flat:
             mo = MarketOrderRequest(
                 symbol=SYMBOL,
                 side=OrderSide.BUY,
@@ -91,8 +91,8 @@ def rsi_trading_job():
                 qty=0.5
             )
             trade_client.submit_order(order_data=mo)
-        # When RSI > 70: sell 0.5 BTC at market
-        elif last_rsi > 70 and not flat:
+        # When RSI >= 70: sell 0.5 BTC at market
+        elif last_rsi >= 70 and not flat:
             mo = MarketOrderRequest(
                 symbol=SYMBOL,
                 side=OrderSide.SELL,
