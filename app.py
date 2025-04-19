@@ -73,18 +73,18 @@ def compute_rsi(series, window=14):
 def rsi_trading_job():
     try:
         now_et = datetime.now(ZoneInfo('America/New_York'))
-        # Fetch last 45 daily bars
+        # Fetch last 60 one-minute bars for RSI calculation (14 are required, so 60 gives extra context)
         req = CryptoBarsRequest(
             symbol_or_symbols=[SYMBOL],
-            timeframe=TimeFrame(1, TimeFrameUnit.Day),
-            start=now_et - timedelta(days=45),
-            limit=45
+            timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+            start=now_et - timedelta(minutes=60),
+            limit=60
         )
         df = data_client.get_crypto_bars(req).df.reset_index()
         df['close'] = df['close'].astype(float)
         df['rsi'] = compute_rsi(df['close'], window=14)
         last_rsi = df['rsi'].iloc[-1]
-        logging.info(f"RSI computed: {last_rsi}")
+        logging.info(f"RSI computed (1-Min): {last_rsi}")
 
         positions = trade_client.get_all_positions()
         flat = not any(p.symbol.replace('/','') == SYMBOL.replace('/','') and float(p.qty) > 0 for p in positions)
@@ -185,10 +185,11 @@ def update_price(n):
 )
 def update_rsi_chart(n):
     now_et = datetime.now(ZoneInfo("America/New_York"))
+    # Request the last 60 one-minute bars to display RSI over time
     req = CryptoBarsRequest(
         symbol_or_symbols=[SYMBOL],
-        timeframe=TimeFrame(1, TimeFrameUnit.Day),
-        start=now_et - timedelta(days=60),  # adjust range as necessary
+        timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+        start=now_et - timedelta(minutes=60),
         limit=60
     )
     df = data_client.get_crypto_bars(req).df.reset_index()
@@ -200,10 +201,10 @@ def update_rsi_chart(n):
         x=df['timestamp'], 
         y=df['rsi'], 
         mode='lines', 
-        name='RSI'
+        name='RSI (1-Min)'
     ))
     fig.update_layout(
-        title='RSI Chart',
+        title='RSI Chart (1-Min Bars)',
         paper_bgcolor=brand_colors['background'],
         plot_bgcolor=brand_colors['background'],
         font_color=brand_colors['text'],
