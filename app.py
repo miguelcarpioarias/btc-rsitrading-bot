@@ -20,6 +20,12 @@ API_SECRET = "HDn7c1Mp3JVvgq98dphRDJH1nt3She3pe5Y9bJi0"
 
 # Initialize trading client
 trade_client = TradingClient(API_KEY, API_SECRET, paper=True)
+# Initialize data client for crypto bars
+from alpaca.data.historical.crypto import CryptoHistoricalDataClient
+from alpaca.data.requests import CryptoBarsRequest
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+# Historical data client for BTC/USD
+data_client = CryptoHistoricalDataClient()
 
 SYMBOL = 'BTC/USD'
 SYMBOL = 'BTC/USD'
