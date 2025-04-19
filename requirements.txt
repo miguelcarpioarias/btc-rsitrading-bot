@@ -18,3 +18,5 @@ matplotlib
 numpy-financial
 pandas_market_calendars
 pandas-datareader
+alpaca-trade-api
+alpaca-py

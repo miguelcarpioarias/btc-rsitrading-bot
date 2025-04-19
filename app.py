@@ -1,182 +1,134 @@
+import os
 import dash
 import dash_bootstrap_components as dbc
-from dash import dcc, html, Input, Output, State
+from dash import dcc, html, Input, Output, State, callback_context
 import plotly.graph_objs as go
 import pandas as pd
-import numpy as np
-import yfinance as yf
+from datetime import datetime, timedelta
+from alpaca.trading.client import TradingClient
+from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
+from alpaca.trading.requests import MarketOrderRequest
+from alpaca.data.historical.crypto import CryptoHistoricalDataClient
+from alpaca.data.requests import CryptoBarsRequest
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
-# --- Signal Definitions ---
-def pattern_signal(df):
-    """Return 'long', 'short', or None based on two-bar reversal pattern."""
-    if df.shape[0] < 2:
-        return None
-    # Extract previous and last bars as scalars
-    prev = df.iloc[-2]
-    last = df.iloc[-1]
-    o_prev, c_prev = prev['Open'], prev['Close']
-    o_last, c_last = last['Open'], last['Close']
-    # Bearish reversal
-    if (o_last > c_last) and (o_prev < c_prev) and (c_last < o_prev) and (o_last >= c_prev):
-        return 'short'
-    # Bullish reversal
-    if (o_last < c_last) and (o_prev > c_prev) and (c_last > o_prev) and (o_last <= c_prev):
-        return 'long'
-    return None
-    o_prev = df['Open'].iloc[-2]
-    c_prev = df['Close'].iloc[-2]
-    o_last = df['Open'].iloc[-1]
-    c_last = df['Close'].iloc[-1]
-    # Bearish reversal
-    if o_last > c_last and o_prev < c_prev and c_last < o_prev and o_last >= c_prev:
-        return 'short'
-    # Bullish reversal
-    if o_last < c_last and o_prev > c_prev and c_last > o_prev and o_last <= c_prev:
-        return 'long'
-    return None
+# --- Configuration ---
+API_KEY    = os.getenv('PK93LZQTSB35L3CL60V5')
+API_SECRET = os.getenv('HDn7c1Mp3JVvgq98dphRDJH1nt3She3pe5Y9bJi0')
+if not API_KEY or not API_SECRET:
+    raise RuntimeError('Set ALPACA_API_KEY and ALPACA_SECRET_KEY env variables')
+# Initialize clients
+trade_client = TradingClient(API_KEY, API_SECRET, paper=True)
+data_client  = CryptoHistoricalDataClient()
+SYMBOL = 'BTC/USD'
 
-
-def sma_signal(df, fast, slow):
-    """Return 'long' or 'short' on SMA crossover, or None."""
-    if df.shape[0] < slow:
-        return None
-    sma_fast = df['Price'].rolling(window=fast).mean()
-    sma_slow = df['Price'].rolling(window=slow).mean()
-    # Previous and last values
-    prev_fast, curr_fast = sma_fast.iloc[-2], sma_fast.iloc[-1]
-    prev_slow, curr_slow = sma_slow.iloc[-2], sma_slow.iloc[-1]
-    if prev_fast < prev_slow and curr_fast > curr_slow:
-        return 'long'
-    if prev_fast > prev_slow and curr_fast < curr_slow:
-        return 'short'
-    return None
-
-# --- Backtest Engine ---
-def backtest(symbol, tp, sl, strategy, fast, slow):
-    # Download daily bars over 6 months
-    hist = yf.download(symbol, period='6mo', interval='1d')
-    hist = hist.rename_axis('time').reset_index()
-    hist['Price'] = hist['Close']
-
-    cash = 10000.0
-    position = 0
-    entry_price = 0.0
-    trades = []
-    equity = []
-
-    for i in range(1, len(hist)):
-        window = hist.iloc[:i+1].copy()
-        # Determine signal
-        sig = pattern_signal(window) if strategy == 'Pattern' else sma_signal(window, fast, slow)
-        price = hist['Close'].iloc[i]
-
-        # Entry
-        if sig == 'long' and position == 0:
-            position = 1
-            entry_price = price
-            trades.append({'time': hist['time'].iloc[i], 'side': 'long', 'entry': price})
-        elif sig == 'short' and position == 0:
-            position = -1
-            entry_price = price
-            trades.append({'time': hist['time'].iloc[i], 'side': 'short', 'entry': price})
-
-        # Exit
-        if position != 0:
-            ret = (price - entry_price) / entry_price * position
-            if ret >= tp or ret <= -sl:
-                cash *= (1 + ret)
-                trades[-1].update({'exit_time': hist['time'].iloc[i], 'exit': price, 'ret': ret, 'cash': cash})
-                position = 0
-
-        # Equity
-        current_equity = cash * (1 + ((price-entry_price)/entry_price * position if position != 0 else 0))
-        equity.append({'time': hist['time'].iloc[i], 'equity': current_equity})
-
-    trades_df = pd.DataFrame(trades)
-    equity_df = pd.DataFrame(equity)
-    return hist, trades_df, equity_df
-
-# --- Dash App ---
+# --- App Setup ---
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
 server = app.server
 
+# Branding
+brand_colors = {
+    'background': '#2C3E50',
+    'text': '#ECF0F1',
+    'primary': '#18BC9C',
+    'accent': '#E74C3C'
+}
+
 app.layout = dbc.Container([
-    html.H2('Equity Backtest Dashboard', style={'color': '#ECF0F1'}),
+    html.H2('Crypto Trading Dashboard (BTC/USD)', style={'color': brand_colors['text']}),
     dbc.Row([
         dbc.Col([
-            html.Label('Ticker'),
-            dcc.Dropdown(
-                options=[{'label': t, 'value': t} for t in ['AMD','NVDA','AAPL','TSLA']],
-                value='AMD', id='bt-pair'
-            ),
-            html.Br(),
-            html.Label('Take-Profit (%)'), dcc.Input(id='bt-tp', type='number', value=3), html.Br(),
-            html.Label('Stop-Loss (%)'),   dcc.Input(id='bt-sl', type='number', value=5), html.Br(),
-            html.Label('Strategy'),
-            dcc.RadioItems(
-                options=[{'label':'Pattern','value':'Pattern'}, {'label':'SMA Crossover','value':'SMA'}],
-                value='Pattern', id='bt-strategy'
-            ), html.Br(),
-            html.Label('SMA Fast Period'), dcc.Input(id='bt-sf', type='number', value=5), html.Br(),
-            html.Label('SMA Slow Period'), dcc.Input(id='bt-ss', type='number', value=20), html.Br(),
-            dbc.Button('Run Backtest', id='bt-run', color='secondary')
-        ], width=4),
-        dbc.Col(dcc.Graph(id='bt-price-chart'), width=8)
+            html.Label('BTC Quantity', style={'color':brand_colors['text']}),
+            dcc.Input(id='btc-qty', type='number', value=0.001, step=0.001), html.Br(), html.Br(),
+            dbc.Button('Buy BTC', id='buy-btc', color='success', className='me-2'),
+            dbc.Button('Sell BTC', id='sell-btc', color='danger'), html.Br(), html.Br(),
+            html.Div(id='order-status', style={'color':brand_colors['text']})
+        ], width=3),
+        dbc.Col(dcc.Graph(id='price-chart'), width=9)
     ]),
-    html.Div(id='bt-metrics', style={'color': '#ECF0F1', 'marginTop': '20px'})
-], fluid=True)
+    dcc.Interval(id='interval', interval=30*1000, n_intervals=0),
+    dbc.Row(dbc.Col(dash.dash_table.DataTable(
+        id='positions-table',
+        style_header={'backgroundColor': brand_colors['background'], 'color': brand_colors['text']},
+        style_cell={'backgroundColor': brand_colors['background'], 'color': brand_colors['text']}
+    )), className='mt-4')
+], fluid=True, style={'backgroundColor': brand_colors['background'], 'padding':'20px'})
 
+# --- Callbacks ---
 @app.callback(
-    Output('bt-price-chart', 'figure'),
-    Output('bt-metrics', 'children'),
-    Input('bt-run', 'n_clicks'),
-    State('bt-pair', 'value'),
-    State('bt-tp', 'value'),
-    State('bt-sl', 'value'),
-    State('bt-strategy', 'value'),
-    State('bt-sf', 'value'),
-    State('bt-ss', 'value')
+    Output('price-chart', 'figure'),
+    Input('interval', 'n_intervals')
 )
-def run_backtest(n_clicks, pair, tp, sl, strategy, sf, ss):
-    if not n_clicks:
-        return go.Figure(), ''
-
-    hist, trades, equity = backtest(pair, tp/100, sl/100, strategy, sf, ss)
-
-    # Price chart
+def update_price(n):
+    # Fetch latest 1-minute bars
+    now = datetime.utcnow()
+    req = CryptoBarsRequest(
+        symbol_or_symbols=[SYMBOL],
+        timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+        start=now - timedelta(hours=1),
+        limit=60
+    )
+    df = data_client.get_crypto_bars(req).df.reset_index()
     fig = go.Figure(data=[
         go.Candlestick(
-            x=hist['time'], open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close']
+            x=df['timestamp'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], name=SYMBOL
         )
     ])
-    # Trade markers
-    for _, t in trades.iterrows():
-        fig.add_trace(go.Scatter(
-            x=[t['time']], y=[t['entry']], mode='markers',
-            marker=dict(color='#E74C3C', size=10,
-                        symbol='triangle-up' if t['side']=='long' else 'triangle-down')
-        ))
     fig.update_layout(
-        title=f'{pair} Backtest', xaxis_rangeslider_visible=False,
-        paper_bgcolor='#2C3E50', plot_bgcolor='#2C3E50', font_color='#ECF0F1'
+        paper_bgcolor=brand_colors['background'],
+        plot_bgcolor=brand_colors['background'],
+        font_color=brand_colors['text'],
+        xaxis_rangeslider_visible=False
     )
+    return fig
 
-    # Metrics
-    total_ret = equity['equity'].iloc[-1]/10000 - 1 if not equity.empty else 0
-    rets = equity['equity'].pct_change().dropna()
-    sharpe = (rets.mean()/rets.std()*np.sqrt(252)) if not rets.empty else 0
-    max_dd = (equity['equity']/equity['equity'].cummax() - 1).min() if not equity.empty else 0
+@app.callback(
+    Output('order-status', 'children'),
+    Input('buy-btc','n_clicks'),
+    Input('sell-btc','n_clicks'),
+    State('btc-qty','value')
+)
+def execute_order(buy, sell, qty):
+    ctx = callback_context.triggered_id
+    if not ctx:
+        return ''
+    side = OrderSide.BUY if ctx=='buy-btc' else OrderSide.SELL
+    mo = MarketOrderRequest(
+        symbol=SYMBOL,
+        side=side,
+        type=OrderType.MARKET,
+        time_in_force=TimeInForce.GTC,
+        qty=qty
+    )
+    try:
+        resp = trade_client.submit_order(order_data=mo)
+        return f"✅ Order {resp.id} submitted ({resp.filled_qty} filled)"
+    except Exception as e:
+        return f"❌ Order failed: {str(e)}"
 
-    metrics = html.Ul([
-        html.Li(f"Trades: {len(trades)}"),
-        html.Li(f"Total Return: {total_ret:.2%}"),
-        html.Li(f"Sharpe Ratio: {sharpe:.2f}"),
-        html.Li(f"Max Drawdown: {max_dd:.2%}")
-    ])
+@app.callback(
+    Output('positions-table','data'),
+    Output('positions-table','columns'),
+    Input('interval','n_intervals')
+)
+def update_positions(n):
+    # Fetch open positions
+    positions = trade_client.get_all_positions()
+    rows = []
+    for p in positions:
+        if p.symbol == SYMBOL:
+            rows.append({
+                'Symbol': p.symbol,
+                'Qty': p.qty,
+                'Unrealized P/L': p.unrealized_pl,
+                'Market Value': p.market_value
+            })
+    if not rows:
+        rows=[{'Symbol':'None','Qty':0,'Unrealized P/L':0,'Market Value':0}]
+    columns=[{"name":c,"id":c} for c in rows[0].keys()]
+    return rows, columns
 
-    return fig, metrics
-
-if __name__ == '__main__':
-    import os
+# --- Run Server ---
+if __name__=='__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
