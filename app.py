@@ -57,29 +57,83 @@ app.layout = dbc.Container([
 ], fluid=True, style={'backgroundColor': brand_colors['background'], 'padding':'20px'})
 
 # --- Callbacks ---
+
+@app.callback(
+    Output('price-chart', 'figure'),
+    Input('interval', 'n_intervals')
+)
+def update_price(n_intervals):
+    # Fetch latest 1-minute crypto bars via Alpaca-py data client
+    now = datetime.utcnow()
+    req = CryptoBarsRequest(
+        symbol_or_symbols=[SYMBOL],
+        timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+        start=now - timedelta(hours=1),
+        limit=60
+    )
+    df = data_client.get_crypto_bars(req).df.reset_index()
+    fig = go.Figure(data=[
+        go.Candlestick(
+            x=df['timestamp'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], name=SYMBOL
+        )
+    ])
+    fig.update_layout(
+        paper_bgcolor=brand_colors['background'],
+        plot_bgcolor=brand_colors['background'],
+        font_color=brand_colors['text'],
+        xaxis_rangeslider_visible=False
+    )
+    return fig
+
+@app.callback(
+    Output('order-status', 'children'),
+    Input('buy-btc','n_clicks'),
+    Input('sell-btc','n_clicks'),
+    State('btc-qty','value')
+)
+def execute_order(buy_clicks, sell_clicks, qty):
+    ctx = callback_context.triggered_id
+    if not ctx:
+        return ''
+    if trade_client is None:
+        return '❌ Trading client not configured'
+    side = OrderSide.BUY if ctx == 'buy-btc' else OrderSide.SELL
+    mo_req = MarketOrderRequest(
+        symbol=SYMBOL,
+        side=side,
+        type=OrderType.MARKET,
+        time_in_force=TimeInForce.GTC,
+        qty=qty
+    )
+    try:
+        resp = trade_client.submit_order(order_data=mo_req)
+        return f"✅ Order {resp.id} submitted, filled_qty={resp.filled_qty}"
+    except Exception as e:
+        return f"❌ Order failed: {str(e)}"
+
 @app.callback(
     Output('positions-table','data'),
     Output('positions-table','columns'),
     Input('interval','n_intervals')
 )
 def update_positions(n):
-    # Fetch open positions
-    positions = trade_client.get_all_positions()
-    rows = []
-    for p in positions:
-        # Normalize symbol for crypto (BTCUSD vs BTC/USD)
-        sym = p.symbol.replace("/", "")
-        if sym == SYMBOL.replace("/", ""):
-            rows.append({
-                'Symbol': p.symbol,
-                'Qty': p.qty,
-                'Unrealized P/L': p.unrealized_pl,
-                'Market Value': p.market_value
-            })
-    # If no positions for BTC, show placeholder
-    if not rows:
-        rows = [{'Symbol': 'None', 'Qty': 0, 'Unrealized P/L': 0, 'Market Value': 0}]
-    columns = [{"name": c, "id": c} for c in rows[0].keys()]
+    if trade_client is None:
+        rows = [{'Symbol':'None','Qty':0,'Unrealized P/L':0,'Market Value':0}]
+    else:
+        positions = trade_client.get_all_positions()
+        rows = []
+        for p in positions:
+            sym = p.symbol.replace("/", "")
+            if sym == SYMBOL.replace("/", ""):
+                rows.append({
+                    'Symbol': p.symbol,
+                    'Qty': p.qty,
+                    'Unrealized P/L': p.unrealized_pl,
+                    'Market Value': p.market_value
+                })
+        if not rows:
+            rows = [{'Symbol':'None','Qty':0,'Unrealized P/L':0,'Market Value':0}]
+    columns = [{'name':c,'id':c} for c in rows[0].keys()]
     return rows, columns
 
 # --- Run Server ---
