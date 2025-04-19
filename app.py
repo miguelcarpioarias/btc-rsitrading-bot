@@ -66,19 +66,13 @@ def compute_rsi(series, window=14):
 def rsi_trading_job():
     try:
         # Fetch last 60 one-minute bars via yfinance
-        df = yf.download(
-            tickers=YF_SYMBOL,
-            period="1d",
-            interval="1m",
-            auto_adjust=False,
-            progress=False
-        )
+        ticker = yf.Ticker(YF_SYMBOL)
+        df = ticker.history(interval="1m", period="1d", auto_adjust=False)
         df.index = pd.to_datetime(df.index)
         if df.index.tzinfo is None:
             df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
         else:
             df.index = df.index.tz_convert('America/New_York')
-        df = df.reset_index().rename(columns={'index':'Datetime'})
         df['Close'] = df['Close'].astype(float)
         df['RSI'] = compute_rsi(df['Close'], window=14)
         print(df[['Open','High','Low','Close']].head(10))
@@ -167,19 +161,14 @@ app.layout = dbc.Container([
     Output('price-chart','figure'), Input('interval','n_intervals')
 )
 def update_price(n):
-    df = yf.download(
-        tickers=YF_SYMBOL,
-        period="1d",
-        interval="1m",
-        auto_adjust=False,
-        progress=False
-    )
+    ticker = yf.Ticker(YF_SYMBOL)
+    df = ticker.history(interval="1m", period="1d", auto_adjust=False)
     df.index = pd.to_datetime(df.index)
     if df.index.tzinfo is None:
         df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
     else:
         df.index = df.index.tz_convert('America/New_York')
-    df = df.reset_index().rename(columns={'index':'Datetime'})
+    df = df.reset_index()
     fig = go.Figure(data=[
         go.Candlestick(
             x=df['Datetime'] if 'Datetime' in df.columns else df['Date'],
@@ -197,19 +186,14 @@ def update_price(n):
     Output('rsi-chart','figure'), Input('interval','n_intervals')
 )
 def update_rsi_chart(n):
-    df = yf.download(
-        tickers=YF_SYMBOL,
-        period="1d",
-        interval="1m",
-        auto_adjust=False,
-        progress=False
-    )
+    ticker = yf.Ticker(YF_SYMBOL)
+    df = ticker.history(interval="1m", period="1d", auto_adjust=False)
     df.index = pd.to_datetime(df.index)
     if df.index.tzinfo is None:
         df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
     else:
         df.index = df.index.tz_convert('America/New_York')
-    df = df.reset_index().rename(columns={'index':'Datetime'})
+    df = df.reset_index()
     df['Close'] = df['Close'].astype(float)
     df['RSI'] = compute_rsi(df['Close'], window=14)
     fig = go.Figure(data=[
