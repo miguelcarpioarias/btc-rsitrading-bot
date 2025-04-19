@@ -13,13 +13,15 @@ from alpaca.data.requests import CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 # --- Configuration ---
-API_KEY    = os.getenv('PK93LZQTSB35L3CL60V5')
-API_SECRET = os.getenv('HDn7c1Mp3JVvgq98dphRDJH1nt3She3pe5Y9bJi0')
-if not API_KEY or not API_SECRET:
-    raise RuntimeError('Set ALPACA_API_KEY and ALPACA_SECRET_KEY env variables')
-# Initialize clients
+# --- Configuration ---
+# Hard-coded Alpaca paper credentials
+API_KEY    = "PK93LZQTSB35L3CL60V5"
+API_SECRET = "HDn7c1Mp3JVvgq98dphRDJH1nt3She3pe5Y9bJi0"
+
+# Initialize trading client
 trade_client = TradingClient(API_KEY, API_SECRET, paper=True)
-data_client  = CryptoHistoricalDataClient()
+
+SYMBOL = 'BTC/USD'
 SYMBOL = 'BTC/USD'
 
 # --- App Setup ---
