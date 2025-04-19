@@ -158,11 +158,15 @@ app.layout = dbc.Container([
     Input('interval','n_intervals')
 )
 def update_price(n):
-    now_et = datetime.now(ZoneInfo("America/New_York"))
     ticker = yf.Ticker("BTC-USD")
-    # Fetch 1-day minute data so that the window shifts as time passes
-    df = ticker.history(interval="1m", period="1d").reset_index()
-    # Determine the proper time column name
+    # Fetch 1-day minute data
+    df = ticker.history(interval="1m", period="1d", auto_adjust=True)
+    df.index = pd.to_datetime(df.index)
+    if df.index.tzinfo is None:
+        df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
+    else:
+        df.index = df.index.tz_convert('America/New_York')
+    df = df.reset_index()
     date_col = 'Date' if 'Date' in df.columns else 'Datetime'
     fig = go.Figure(data=[
         go.Candlestick(
@@ -188,10 +192,15 @@ def update_price(n):
     Input('interval','n_intervals')
 )
 def update_rsi_chart(n):
-    now_et = datetime.now(ZoneInfo("America/New_York"))
     ticker = yf.Ticker("BTC-USD")
-    # Use full day of 1-minute data; as a new minute arrives, the oldest candle is dropped
-    df = ticker.history(interval="1m", period="1d").reset_index()
+    df = ticker.history(interval="1m", period="1d")
+    # Convert timestamps to Eastern Time
+    df.index = pd.to_datetime(df.index)
+    if df.index.tzinfo is None:
+        df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
+    else:
+        df.index = df.index.tz_convert('America/New_York')
+    df = df.reset_index()
     date_col = 'Date' if 'Date' in df.columns else 'Datetime'
     df['Close'] = df['Close'].astype(float)
     df['rsi'] = compute_rsi(df['Close'], window=14)
@@ -211,6 +220,7 @@ def update_rsi_chart(n):
         yaxis=dict(range=[0, 100])
     )
     return fig
+
 
 @app.callback(
     Output('order-status','children'),
