@@ -8,36 +8,45 @@ import yfinance as yf
 
 # --- Signal Definitions ---
 def pattern_signal(df):
-    if len(df) < 2:
+    """Return 'long', 'short', or None based on two-bar reversal pattern."""
+    # Ensure at least two bars
+    if df.shape[0] < 2:
         return None
-    o, c = df.Open.iloc[-2], df.Close.iloc[-2]
-    o1, c1 = df.Open.iloc[-1], df.Close.iloc[-1]
-    if o1 > c1 and o < c and c1 < o and o1 >= c:
+    o_prev = df['Open'].iloc[-2]
+    c_prev = df['Close'].iloc[-2]
+    o_last = df['Open'].iloc[-1]
+    c_last = df['Close'].iloc[-1]
+    # Bearish reversal
+    if o_last > c_last and o_prev < c_prev and c_last < o_prev and o_last >= c_prev:
         return 'short'
-    if o1 < c1 and o > c and c1 > o and o1 <= c:
+    # Bullish reversal
+    if o_last < c_last and o_prev > c_prev and c_last > o_prev and o_last <= c_prev:
         return 'long'
     return None
 
 
 def sma_signal(df, fast, slow):
-    if len(df) < slow:
+    """Return 'long' or 'short' on SMA crossover, or None."""
+    if df.shape[0] < slow:
         return None
-    sma_f = df.Price.rolling(fast).mean()
-    sma_s = df.Price.rolling(slow).mean()
-    if sma_f.iloc[-2] < sma_s.iloc[-2] and sma_f.iloc[-1] > sma_s.iloc[-1]:
+    sma_fast = df['Price'].rolling(window=fast).mean()
+    sma_slow = df['Price'].rolling(window=slow).mean()
+    # Previous and last values
+    prev_fast, curr_fast = sma_fast.iloc[-2], sma_fast.iloc[-1]
+    prev_slow, curr_slow = sma_slow.iloc[-2], sma_slow.iloc[-1]
+    if prev_fast < prev_slow and curr_fast > curr_slow:
         return 'long'
-    if sma_f.iloc[-2] > sma_s.iloc[-2] and sma_f.iloc[-1] < sma_s.iloc[-1]:
+    if prev_fast > prev_slow and curr_fast < curr_slow:
         return 'short'
     return None
 
 # --- Backtest Engine ---
 def backtest(symbol, tp, sl, strategy, fast, slow):
-    # For equities, use daily bars over 12 months to stay within Yahoo limits
-    hist = yf.download(symbol, period='12mo', interval='1d')
-    # Reset index to get Date column and rename to time
-    hist = hist.reset_index().rename(columns={'Date':'time'})
-    hist = hist.reset_index().rename(columns={'Datetime':'time'})
+    # Download daily bars over 6 months
+    hist = yf.download(symbol, period='6mo', interval='1d')
+    hist = hist.rename_axis('time').reset_index()
     hist['Price'] = hist['Close']
+
     cash = 10000.0
     position = 0
     entry_price = 0.0
@@ -45,33 +54,36 @@ def backtest(symbol, tp, sl, strategy, fast, slow):
     equity = []
 
     for i in range(1, len(hist)):
-        window = hist.iloc[:i+1]
+        window = hist.iloc[:i+1].copy()
+        # Determine signal
         sig = pattern_signal(window) if strategy == 'Pattern' else sma_signal(window, fast, slow)
-        price = hist.Close.iloc[i]
+        price = hist['Close'].iloc[i]
 
-        # Entry logic
+        # Entry
         if sig == 'long' and position == 0:
             position = 1
             entry_price = price
-            trades.append({'time': hist.time.iloc[i], 'side': 'long', 'entry': price})
+            trades.append({'time': hist['time'].iloc[i], 'side': 'long', 'entry': price})
         elif sig == 'short' and position == 0:
             position = -1
             entry_price = price
-            trades.append({'time': hist.time.iloc[i], 'side': 'short', 'entry': price})
+            trades.append({'time': hist['time'].iloc[i], 'side': 'short', 'entry': price})
 
-        # Exit logic
+        # Exit
         if position != 0:
             ret = (price - entry_price) / entry_price * position
             if ret >= tp or ret <= -sl:
                 cash *= (1 + ret)
-                trades[-1].update({'exit_time': hist.time.iloc[i], 'exit': price, 'ret': ret, 'cash': cash})
+                trades[-1].update({'exit_time': hist['time'].iloc[i], 'exit': price, 'ret': ret, 'cash': cash})
                 position = 0
 
-        # Track equity
-        current_eq = cash * (1 + ((price - entry_price)/entry_price * position if position != 0 else 0))
-        equity.append({'time': hist.time.iloc[i], 'equity': current_eq})
+        # Equity
+        current_equity = cash * (1 + ((price-entry_price)/entry_price * position if position != 0 else 0))
+        equity.append({'time': hist['time'].iloc[i], 'equity': current_equity})
 
-    return hist, pd.DataFrame(trades), pd.DataFrame(equity)
+    trades_df = pd.DataFrame(trades)
+    equity_df = pd.DataFrame(equity)
+    return hist, trades_df, equity_df
 
 # --- Dash App ---
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
@@ -83,35 +95,19 @@ app.layout = dbc.Container([
         dbc.Col([
             html.Label('Ticker'),
             dcc.Dropdown(
-                options=[
-                    {'label': 'AMD', 'value': 'AMD'},
-                    {'label': 'NVDA', 'value': 'NVDA'},
-                    {'label': 'AAPL', 'value': 'AAPL'},
-                    {'label': 'TSLA', 'value': 'TSLA'}
-                ],
-                value='AMD',
-                id='bt-pair'
+                options=[{'label': t, 'value': t} for t in ['AMD','NVDA','AAPL','TSLA']],
+                value='AMD', id='bt-pair'
             ),
             html.Br(),
-            html.Label('Take-Profit (%)'),
-            dcc.Input(id='bt-tp', type='number', value=3),
-            html.Br(),
-            html.Label('Stop-Loss (%)'),
-            dcc.Input(id='bt-sl', type='number', value=5),
-            html.Br(),
+            html.Label('Take-Profit (%)'), dcc.Input(id='bt-tp', type='number', value=3), html.Br(),
+            html.Label('Stop-Loss (%)'),   dcc.Input(id='bt-sl', type='number', value=5), html.Br(),
             html.Label('Strategy'),
             dcc.RadioItems(
-                options=[{'label': 'Pattern', 'value': 'Pattern'}, {'label': 'SMA Crossover', 'value': 'SMA'}],
-                value='Pattern',
-                id='bt-strategy'
-            ),
-            html.Br(),
-            html.Label('SMA Fast Period'),
-            dcc.Input(id='bt-sf', type='number', value=5),
-            html.Br(),
-            html.Label('SMA Slow Period'),
-            dcc.Input(id='bt-ss', type='number', value=20),
-            html.Br(),
+                options=[{'label':'Pattern','value':'Pattern'}, {'label':'SMA Crossover','value':'SMA'}],
+                value='Pattern', id='bt-strategy'
+            ), html.Br(),
+            html.Label('SMA Fast Period'), dcc.Input(id='bt-sf', type='number', value=5), html.Br(),
+            html.Label('SMA Slow Period'), dcc.Input(id='bt-ss', type='number', value=20), html.Br(),
             dbc.Button('Run Backtest', id='bt-run', color='secondary')
         ], width=4),
         dbc.Col(dcc.Graph(id='bt-price-chart'), width=8)
@@ -134,19 +130,20 @@ def run_backtest(n_clicks, pair, tp, sl, strategy, sf, ss):
     if not n_clicks:
         return go.Figure(), ''
 
-    hist, trades, eq = backtest(pair, tp/100, sl/100, strategy, sf, ss)
+    hist, trades, equity = backtest(pair, tp/100, sl/100, strategy, sf, ss)
 
     # Price chart
     fig = go.Figure(data=[
         go.Candlestick(
-            x=hist.time, open=hist.Open, high=hist.High, low=hist.Low, close=hist.Close
+            x=hist['time'], open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close']
         )
     ])
-    # Add trade entries
+    # Trade markers
     for _, t in trades.iterrows():
         fig.add_trace(go.Scatter(
-            x=[t.time], y=[t.entry], mode='markers',
-            marker=dict(color='#E74C3C', size=10, symbol='triangle-up' if t.side=='long' else 'triangle-down')
+            x=[t['time']], y=[t['entry']], mode='markers',
+            marker=dict(color='#E74C3C', size=10,
+                        symbol='triangle-up' if t['side']=='long' else 'triangle-down')
         ))
     fig.update_layout(
         title=f'{pair} Backtest', xaxis_rangeslider_visible=False,
@@ -154,10 +151,11 @@ def run_backtest(n_clicks, pair, tp, sl, strategy, sf, ss):
     )
 
     # Metrics
-    total_ret = eq.equity.iloc[-1] / 10000 - 1 if not eq.empty else 0
-    returns = eq.equity.pct_change().dropna()
-    sharpe = (returns.mean() / returns.std() * np.sqrt(252)) if not returns.empty else 0
-    max_dd = (eq.equity / eq.equity.cummax() - 1).min() if not eq.empty else 0
+    total_ret = equity['equity'].iloc[-1]/10000 - 1 if not equity.empty else 0
+    rets = equity['equity'].pct_change().dropna()
+    sharpe = (rets.mean()/rets.std()*np.sqrt(252)) if not rets.empty else 0
+    max_dd = (equity['equity']/equity['equity'].cummax() - 1).min() if not equity.empty else 0
+
     metrics = html.Ul([
         html.Li(f"Trades: {len(trades)}"),
         html.Li(f"Total Return: {total_ret:.2%}"),
@@ -168,4 +166,6 @@ def run_backtest(n_clicks, pair, tp, sl, strategy, sf, ss):
     return fig, metrics
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(__import__('os').environ.get('PORT', 10000)), debug=False)
+    import os
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port, debug=False)
