@@ -68,6 +68,7 @@ def compute_rsi(series, window=14):
 def rsi_trading_job():
     try:
         now_et = datetime.now(ZoneInfo('America/New_York'))
+        # Fetch last 45 daily bars
         req = CryptoBarsRequest(
             symbol_or_symbols=[SYMBOL],
             timeframe=TimeFrame(1, TimeFrameUnit.Day),
@@ -79,34 +80,27 @@ def rsi_trading_job():
         df['rsi'] = compute_rsi(df['close'], window=14)
         last_rsi = df['rsi'].iloc[-1]
         positions = trade_client.get_all_positions()
-        flat = not any(p.symbol.replace('/','')==SYMBOL.replace('/','') and float(p.qty)!=0 for p in positions)
-        # Enter long
+        flat = not any(p.symbol.replace('/','') == SYMBOL.replace('/','') and float(p.qty) > 0 for p in positions)
+        # When RSI < 30: buy 0.5 BTC at market
         if last_rsi < 30 and flat:
-            entry_price = df['close'].iloc[-1]
-            tp_price = round(entry_price * 1.02, 2)
-            sl_price = round(entry_price * 0.95, 2)
             mo = MarketOrderRequest(
                 symbol=SYMBOL,
                 side=OrderSide.BUY,
                 type=OrderType.MARKET,
                 time_in_force=TimeInForce.GTC,
-                qty=0.001,
-                take_profit={'limit_price': tp_price},
-                stop_loss={'stop_price': sl_price}
+                qty=0.5
             )
             trade_client.submit_order(order_data=mo)
-        # Exit long
+        # When RSI > 70: sell 0.5 BTC at market
         elif last_rsi > 70 and not flat:
-            qty = sum(float(p.qty) for p in positions if p.symbol.replace('/','')==SYMBOL.replace('/',''))
-            if qty > 0:
-                mo = MarketOrderRequest(
-                    symbol=SYMBOL,
-                    side=OrderSide.SELL,
-                    type=OrderType.MARKET,
-                    time_in_force=TimeInForce.GTC,
-                    qty=qty
-                )
-                trade_client.submit_order(order_data=mo)
+            mo = MarketOrderRequest(
+                symbol=SYMBOL,
+                side=OrderSide.SELL,
+                type=OrderType.MARKET,
+                time_in_force=TimeInForce.GTC,
+                qty=0.5
+            )
+            trade_client.submit_order(order_data=mo)
     except Exception as e:
         print(f"RSI trading job error: {e}")
 
