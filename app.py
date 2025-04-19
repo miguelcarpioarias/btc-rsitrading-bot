@@ -158,16 +158,14 @@ app.layout = dbc.Container([
     Input('interval','n_intervals')
 )
 def update_price(n):
-    # Use Eastern Time for consistency
     now_et = datetime.now(ZoneInfo("America/New_York"))
-    # Fetch last 1 hour of 1-minute candles using yfinance
     ticker = yf.Ticker("BTC-USD")
-    # period "1h" returns ~60 one-minute bars
     df = ticker.history(interval="1m", period="1h").reset_index()
-    # Build candlestick chart using yfinance column names (Datetime, Open, High, Low, Close)
+    # Use 'Date' column instead of 'Datetime' (if that’s what is returned)
+    date_col = 'Date' if 'Date' in df.columns else 'Datetime'
     fig = go.Figure(data=[
         go.Candlestick(
-            x=df['Datetime'], 
+            x=df[date_col], 
             open=df['Open'], 
             high=df['High'],
             low=df['Low'], 
@@ -190,16 +188,15 @@ def update_price(n):
 )
 def update_rsi_chart(n):
     now_et = datetime.now(ZoneInfo("America/New_York"))
-    # Get last 60 one-minute candles from yfinance
     ticker = yf.Ticker("BTC-USD")
     df = ticker.history(interval="1m", period="1h").reset_index()
-    # Compute RSI based on the Close price using a 14-bar window
+    date_col = 'Date' if 'Date' in df.columns else 'Datetime'
     df['Close'] = df['Close'].astype(float)
     df['rsi'] = compute_rsi(df['Close'], window=14)
     
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=df['Datetime'], 
+        x=df[date_col], 
         y=df['rsi'], 
         mode='lines', 
         name='RSI (1-Min)'
