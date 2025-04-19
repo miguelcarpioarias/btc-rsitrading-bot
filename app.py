@@ -136,6 +136,7 @@ app.layout = dbc.Container([
         ], width=3),
         dbc.Col(dcc.Graph(id='price-chart'), width=9)
     ]),
+    dbc.Row(dcc.Graph(id='rsi-chart'), className='mt-4'),
     dcc.Interval(id='interval', interval=30*1000, n_intervals=0),
     dbc.Row(dbc.Col(dash_table.DataTable(
         id='positions-table', page_size=10,
@@ -175,6 +176,38 @@ def update_price(n):
         plot_bgcolor=brand_colors['background'],
         font_color=brand_colors['text'],
         xaxis_rangeslider_visible=False
+    )
+    return fig
+
+@app.callback(
+    Output('rsi-chart', 'figure'),
+    Input('interval', 'n_intervals')
+)
+def update_rsi_chart(n):
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    req = CryptoBarsRequest(
+        symbol_or_symbols=[SYMBOL],
+        timeframe=TimeFrame(1, TimeFrameUnit.Day),
+        start=now_et - timedelta(days=60),  # adjust range as necessary
+        limit=60
+    )
+    df = data_client.get_crypto_bars(req).df.reset_index()
+    df['close'] = df['close'].astype(float)
+    df['rsi'] = compute_rsi(df['close'], window=14)
+    
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=df['timestamp'], 
+        y=df['rsi'], 
+        mode='lines', 
+        name='RSI'
+    ))
+    fig.update_layout(
+        title='RSI Chart',
+        paper_bgcolor=brand_colors['background'],
+        plot_bgcolor=brand_colors['background'],
+        font_color=brand_colors['text'],
+        yaxis=dict(range=[0, 100])
     )
     return fig
 
