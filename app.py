@@ -209,9 +209,12 @@ def execute_order(buy, sell, qty):
     if not ctx:
         return ''
     side = OrderSide.BUY if ctx=='buy-btc' else OrderSide.SELL
+    positions = trade_client.get_all_positions()
+    available = float(positions[0].qty) if positions else 0.0  # or use a function that aggregates available BTC from the positions
+    order_qty = min(qty, available)
     mo = MarketOrderRequest(
         symbol=ALPACA_SYMBOL, side=side, type=OrderType.MARKET,
-        time_in_force=TimeInForce.GTC, qty=qty
+        time_in_force=TimeInForce.GTC, qty=order_qty
     )
     try:
         resp = trade_client.submit_order(order_data=mo)
