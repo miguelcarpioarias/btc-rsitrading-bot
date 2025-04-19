@@ -9,9 +9,20 @@ import yfinance as yf
 # --- Signal Definitions ---
 def pattern_signal(df):
     """Return 'long', 'short', or None based on two-bar reversal pattern."""
-    # Ensure at least two bars
     if df.shape[0] < 2:
         return None
+    # Extract previous and last bars as scalars
+    prev = df.iloc[-2]
+    last = df.iloc[-1]
+    o_prev, c_prev = prev['Open'], prev['Close']
+    o_last, c_last = last['Open'], last['Close']
+    # Bearish reversal
+    if (o_last > c_last) and (o_prev < c_prev) and (c_last < o_prev) and (o_last >= c_prev):
+        return 'short'
+    # Bullish reversal
+    if (o_last < c_last) and (o_prev > c_prev) and (c_last > o_prev) and (o_last <= c_prev):
+        return 'long'
+    return None
     o_prev = df['Open'].iloc[-2]
     c_prev = df['Close'].iloc[-2]
     o_last = df['Open'].iloc[-1]
