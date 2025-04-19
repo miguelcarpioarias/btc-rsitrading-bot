@@ -1,6 +1,5 @@
 import os
 import threading
-import time
 import dash
 import dash_bootstrap_components as dbc
 from dash import dcc, html, Input, Output, State, callback_context, dash_table
@@ -20,15 +19,11 @@ from alpaca.data.requests import CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 # --- Configuration ---
-# Hard-coded Alpaca paper credentials
-API_KEY    = "PK93LZQTSB35L3CL60V5"
-API_SECRET = "HDn7c1Mp3JVvgq98dphRDJH1nt3She3pe5Y9bJi0"
-# Initialize trading client
+API_KEY    = os.getenv('ALPACA_KEY') or os.getenv('ALPACA_API_KEY') or "PK93LZQTSB35L3CL60V5"
+API_SECRET = os.getenv('ALPACA_SECRET') or os.getenv('ALPACA_SECRET_KEY') or "HDn7c1Mp3JVvgq98dphRDJH1nt3She3pe5Y9bJi0"
 trade_client = TradingClient(API_KEY, API_SECRET, paper=True)
 
-# Initialize data client for crypto bars
 data_client = CryptoHistoricalDataClient()
-SYMBOL = 'BTC/USD'
 SYMBOL = 'BTC/USD'
 
 # --- Streaming Order Updates ---
@@ -48,6 +43,7 @@ def start_trade_stream():
     stream = TradingStream(API_KEY, API_SECRET, paper=True)
     stream.subscribe_trade_updates(trade_updates_handler)
     stream.run()
+
 threading.Thread(target=start_trade_stream, daemon=True).start()
 
 # --- RSI Computation & Trading Job ---
@@ -59,6 +55,7 @@ def compute_rsi(series, window=14):
     avg_loss = loss.rolling(window).mean()
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
+
 
 def rsi_trading_job():
     try:
@@ -75,27 +72,37 @@ def rsi_trading_job():
         last_rsi = df['rsi'].iloc[-1]
         positions = trade_client.get_all_positions()
         flat = not any(p.symbol.replace('/','')==SYMBOL.replace('/','') and float(p.qty)!=0 for p in positions)
+        # Enter long
         if last_rsi < 30 and flat:
-            entry = df['close'].iloc[-1]
-            tp = round(entry * 1.02, 2)
-            sl = round(entry * 0.95, 2)
+            entry_price = df['close'].iloc[-1]
+            tp_price = round(entry_price * 1.02, 2)
+            sl_price = round(entry_price * 0.95, 2)
             mo = MarketOrderRequest(
-                symbol=SYMBOL, side=OrderSide.BUY, type=OrderType.MARKET,
-                time_in_force=TimeInForce.GTC, qty=0.001,
-                take_profit={'limit_price': tp}, stop_loss={'stop_price': sl}
+                symbol=SYMBOL,
+                side=OrderSide.BUY,
+                type=OrderType.MARKET,
+                time_in_force=TimeInForce.GTC,
+                qty=0.001,
+                take_profit={'limit_price': tp_price},
+                stop_loss={'stop_price': sl_price}
             )
             trade_client.submit_order(order_data=mo)
+        # Exit long
         elif last_rsi > 70 and not flat:
             qty = sum(float(p.qty) for p in positions if p.symbol.replace('/','')==SYMBOL.replace('/',''))
             if qty > 0:
                 mo = MarketOrderRequest(
-                    symbol=SYMBOL, side=OrderSide.SELL, type=OrderType.MARKET,
-                    time_in_force=TimeInForce.GTC, qty=qty
+                    symbol=SYMBOL,
+                    side=OrderSide.SELL,
+                    type=OrderType.MARKET,
+                    time_in_force=TimeInForce.GTC,
+                    qty=qty
                 )
                 trade_client.submit_order(order_data=mo)
     except Exception as e:
         print(f"RSI trading job error: {e}")
 
+# Schedule RSI job every minute
 scheduler = BackgroundScheduler(timezone='US/Eastern')
 scheduler.add_job(rsi_trading_job, 'interval', minutes=1)
 scheduler.start()
@@ -133,32 +140,53 @@ app.layout = dbc.Container([
 
 # --- Callbacks ---
 @app.callback(
+    Output('price-chart','figure'), Input('interval','n_intervals')
+)
+def update_price(n):
+    now = datetime.utcnow()
+    req = CryptoBarsRequest(
+        symbol_or_symbols=[SYMBOL], timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+        start=now - timedelta(hours=1), limit=60
+    )
+    df = data_client.get_crypto_bars(req).df.reset_index()
+    fig = go.Figure(data=[
+        go.Candlestick(x=df['timestamp'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], name=SYMBOL)
+    ])
+    fig.update_layout(paper_bgcolor=brand_colors['background'], plot_bgcolor=brand_colors['background'], font_color=brand_colors['text'], xaxis_rangeslider_visible=False)
+    return fig
+
+@app.callback(
+    Output('order-status','children'),
+    Input('buy-btc','n_clicks'), Input('sell-btc','n_clicks'), State('btc-qty','value')
+)
+def execute_order(buy, sell, qty):
+    ctx = callback_context.triggered_id
+    if not ctx: return ''
+    side = OrderSide.BUY if ctx=='buy-btc' else OrderSide.SELL
+    mo = MarketOrderRequest(symbol=SYMBOL, side=side, type=OrderType.MARKET, time_in_force=TimeInForce.GTC, qty=qty)
+    try:
+        resp = trade_client.submit_order(order_data=mo)
+        return f"✅ Order {resp.id} submitted (filled_qty={resp.filled_qty})"
+    except Exception as e:
+        return f"❌ Order failed: {e}"    
+
+@app.callback(
     Output('positions-table','data'), Output('positions-table','columns'),
     Input('interval','n_intervals')
 )
 def update_positions(n):
-    # Safely fetch open positions
-    positions = []
-    try:
-        positions = trade_client.get_all_positions() or []
-    except:
-        positions = []
-
     rows = []
-    for p in positions:
-        if p.symbol == SYMBOL:
-            rows.append({
-                'Symbol': p.symbol,
-                'Qty': p.qty,
-                'Unrealized P/L': p.unrealized_pl,
-                'Market Value': p.market_value
-            })
-    # Fallback if no positions
+    try:
+        pos = trade_client.get_all_positions() or []
+        for p in pos:
+            if p.symbol == SYMBOL:
+                rows.append({'Symbol':p.symbol,'Qty':p.qty,'Unrealized P/L':p.unrealized_pl,'Market Value':p.market_value})
+    except:
+        rows = []
     if not rows:
-        rows = [{'Symbol': 'None', 'Qty': 0, 'Unrealized P/L': 0, 'Market Value': 0}]
-    # Build columns list
-    columns = [{'name': col, 'id': col} for col in rows[0].keys()]
-    return rows, columns
+        rows = [{'Symbol':'None','Qty':0,'Unrealized P/L':0,'Market Value':0}]
+    cols = [{'name':c,'id':c} for c in rows[0].keys()]
+    return rows, cols
 
 @app.callback(
     Output('orders-table','data'), Output('orders-table','columns'),
@@ -167,7 +195,7 @@ def update_positions(n):
 def update_orders(n):
     data = trade_updates_list[-20:]
     rows = data or [{'event':'None','symbol':'','filled_qty':0,'filled_avg_price':0,'timestamp':''}]
-    cols=[{'name':k,'id':k} for k in rows[0].keys()]
+    cols = [{'name':k,'id':k} for k in rows[0].keys()]
     return rows, cols
 
 if __name__=='__main__':
