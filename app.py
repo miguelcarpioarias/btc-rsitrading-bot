@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
 import logging
+import yfinance as yf
 
 # Alpaca clients
 from alpaca.trading.client import TradingClient
@@ -157,18 +158,21 @@ app.layout = dbc.Container([
     Input('interval','n_intervals')
 )
 def update_price(n):
-    # Use Eastern Time for price updates
+    # Use Eastern Time for consistency
     now_et = datetime.now(ZoneInfo("America/New_York"))
-    req = CryptoBarsRequest(
-        symbol_or_symbols=[SYMBOL],
-        timeframe=TimeFrame(1, TimeFrameUnit.Minute),
-        start=now_et - timedelta(hours=1), limit=60
-    )
-    df = data_client.get_crypto_bars(req).df.reset_index()
+    # Fetch last 1 hour of 1-minute candles using yfinance
+    ticker = yf.Ticker("BTC-USD")
+    # period "1h" returns ~60 one-minute bars
+    df = ticker.history(interval="1m", period="1h").reset_index()
+    # Build candlestick chart using yfinance column names (Datetime, Open, High, Low, Close)
     fig = go.Figure(data=[
         go.Candlestick(
-            x=df['timestamp'], open=df['open'], high=df['high'],
-            low=df['low'], close=df['close'], name=SYMBOL
+            x=df['Datetime'], 
+            open=df['Open'], 
+            high=df['High'],
+            low=df['Low'], 
+            close=df['Close'], 
+            name="BTC-USD"
         )
     ])
     fig.update_layout(
@@ -179,26 +183,23 @@ def update_price(n):
     )
     return fig
 
+
 @app.callback(
     Output('rsi-chart', 'figure'),
     Input('interval', 'n_intervals')
 )
 def update_rsi_chart(n):
     now_et = datetime.now(ZoneInfo("America/New_York"))
-    # Request the last 60 one-minute bars to display RSI over time
-    req = CryptoBarsRequest(
-        symbol_or_symbols=[SYMBOL],
-        timeframe=TimeFrame(1, TimeFrameUnit.Minute),
-        start=now_et - timedelta(minutes=60),
-        limit=60
-    )
-    df = data_client.get_crypto_bars(req).df.reset_index()
-    df['close'] = df['close'].astype(float)
-    df['rsi'] = compute_rsi(df['close'], window=14)
+    # Get last 60 one-minute candles from yfinance
+    ticker = yf.Ticker("BTC-USD")
+    df = ticker.history(interval="1m", period="1h").reset_index()
+    # Compute RSI based on the Close price using a 14-bar window
+    df['Close'] = df['Close'].astype(float)
+    df['rsi'] = compute_rsi(df['Close'], window=14)
     
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=df['timestamp'], 
+        x=df['Datetime'], 
         y=df['rsi'], 
         mode='lines', 
         name='RSI (1-Min)'
