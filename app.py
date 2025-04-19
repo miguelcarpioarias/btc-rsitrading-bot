@@ -28,23 +28,31 @@ SYMBOL = 'BTC/USD'
 
 # --- Streaming Order Updates ---
 trade_updates_list = []
-async def trade_updates_handler(data):
-    event = data.get('event')
-    order = data.get('order', {})
-    trade_updates_list.append({
-        'event': event,
-        'symbol': order.get('symbol'),
-        'filled_qty': order.get('filled_qty'),
-        'filled_avg_price': order.get('filled_avg_price'),
-        'timestamp': data.get('timestamp')
-    })
+async def trade_updates_handler(update):
+    """
+    Handle incoming trade updates from Alpaca Streaming.
+    """
+    try:
+        # Access attributes directly from TradeUpdate object
+        event = update.event
+        order = update.order
+        trade_updates_list.append({
+            'event': event,
+            'symbol': order.symbol,
+            'filled_qty': order.filled_qty,
+            'filled_avg_price': order.filled_avg_price,
+            'timestamp': update.timestamp
+        })
+    except Exception as e:
+        print(f"Stream handler error: {e}")
 
+# Start trade updates stream
 def start_trade_stream():
     stream = TradingStream(API_KEY, API_SECRET, paper=True)
     stream.subscribe_trade_updates(trade_updates_handler)
     stream.run()
 
-threading.Thread(target=start_trade_stream, daemon=True).start()
+threading.Thread(target=start_trade_stream, daemon=True).start()(target=start_trade_stream, daemon=True).start()
 
 # --- RSI Computation & Trading Job ---
 def compute_rsi(series, window=14):
