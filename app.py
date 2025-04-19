@@ -121,13 +121,6 @@ scheduler = BackgroundScheduler(timezone='US/Eastern')
 scheduler.add_job(rsi_trading_job, 'interval', minutes=1)
 scheduler.start()
 
-# Streaming must start before app
-start_trade_stream():
-    start_trade_stream()
-    start_scheduler()
-
-initialize()
-
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
 server = app.server
