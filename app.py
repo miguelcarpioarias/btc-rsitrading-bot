@@ -32,7 +32,10 @@ def sma_signal(df, fast, slow):
 
 # --- Backtest Engine ---
 def backtest(symbol, tp, sl, strategy, fast, slow):
-    hist = yf.download(symbol, period='6mo', interval='15m')
+    # For equities, use daily bars over 12 months to stay within Yahoo limits
+    hist = yf.download(symbol, period='12mo', interval='1d')
+    # Reset index to get Date column and rename to time
+    hist = hist.reset_index().rename(columns={'Date':'time'})
     hist = hist.reset_index().rename(columns={'Datetime':'time'})
     hist['Price'] = hist['Close']
     cash = 10000.0
