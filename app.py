@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
 import logging
-import yfinance as yf
+import requests
 
 # Alpaca clients
 from alpaca.trading.client import TradingClient
@@ -23,7 +23,7 @@ API_SECRET = os.getenv('ALPACA_SECRET') or os.getenv('ALPACA_SECRET_KEY') or "HD
 trade_client = TradingClient(API_KEY, API_SECRET, paper=True)
 
 # Symbols
-YF_SYMBOL    = 'BTC-USD'   # yfinance ticker
+BITSTAMP_URL = "https://www.bitstamp.net/api/v2/ohlc/btcusd/"
 ALPACA_SYMBOL = 'BTC/USD'  # Alpaca trading symbol
 
 # Set up logging
@@ -63,23 +63,25 @@ def compute_rsi(series, window=14):
     return 100 - (100 / (1 + rs))
 
 
+def fetch_bitstamp_candles(limit=1000, step=60):
+    params = {'step': step, 'limit': limit}
+    resp = requests.get(BITSTAMP_URL, params=params)
+    data = resp.json().get('data', {}).get('ohlc', [])
+    df = pd.DataFrame(data)
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
+    for col in ['open', 'high', 'low', 'close']:
+        df[col] = df[col].astype(float)
+    return df.set_index('timestamp')
+
+
 def rsi_trading_job():
     try:
-        # Fetch last 60 one-minute bars via yfinance
-        ticker = yf.Ticker(YF_SYMBOL)
-        df = ticker.history(interval="1m", period="1d", auto_adjust=False)
-        df.index = pd.to_datetime(df.index)
-        if df.index.tzinfo is None:
-            df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
-        else:
-            df.index = df.index.tz_convert('America/New_York')
-        df['Close'] = df['Close'].astype(float)
-        df['RSI'] = compute_rsi(df['Close'], window=14)
-        print(df[['Open','High','Low','Close']].head(10))
+        df = fetch_bitstamp_candles(limit=1000, step=60)
+        df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
+        df['RSI'] = compute_rsi(df['close'], window=14)
         last_rsi = df['RSI'].iloc[-1]
         logging.info(f"RSI(1m)={last_rsi:.2f}")
 
-        # Determine flat vs in-position
         positions = trade_client.get_all_positions()
         clean_symbol = ALPACA_SYMBOL.replace('/', '')
         in_pos = any(p.symbol == clean_symbol and float(p.qty) > 0 for p in positions)
@@ -89,7 +91,6 @@ def rsi_trading_job():
 
         if last_rsi <= 30 and not in_pos:
             logging.info("RSI <=30; placing BUY")
-            # compute how much BTC you can buy with, say, up to $100 USD
             target_usd = min(100, usd_avail)
             mo = MarketOrderRequest(
                 symbol=ALPACA_SYMBOL,
@@ -102,9 +103,8 @@ def rsi_trading_job():
 
         elif last_rsi >= 70 and in_pos:
             logging.info("RSI >=70; placing SELL")
-            positions = trade_client.get_all_positions()
             available_btc = float(positions[0].qty) if positions else 0.0
-            sell_qty = round(min(0.5, available_btc) - 1e-8, 8)  # small epsilon to avoid precision errors
+            sell_qty = round(min(0.5, available_btc) - 1e-8, 8)
             mo = MarketOrderRequest(
                 symbol=ALPACA_SYMBOL,
                 side=OrderSide.SELL,
@@ -161,18 +161,10 @@ app.layout = dbc.Container([
     Output('price-chart','figure'), Input('interval','n_intervals')
 )
 def update_price(n):
-    ticker = yf.Ticker(YF_SYMBOL)
-    df = ticker.history(interval="1m", period="1d", auto_adjust=False)
-    df.index = pd.to_datetime(df.index)
-    if df.index.tzinfo is None:
-        df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
-    else:
-        df.index = df.index.tz_convert('America/New_York')
-    df = df.reset_index()
+    df = fetch_bitstamp_candles(limit=1000, step=60)
     fig = go.Figure(data=[
         go.Candlestick(
-            x=df['Datetime'] if 'Datetime' in df.columns else df['Date'],
-            open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
+            x=df.index, open=df['open'], high=df['high'], low=df['low'], close=df['close'],
             increasing_line_color='green', decreasing_line_color='red'
         )
     ])
@@ -186,21 +178,10 @@ def update_price(n):
     Output('rsi-chart','figure'), Input('interval','n_intervals')
 )
 def update_rsi_chart(n):
-    ticker = yf.Ticker(YF_SYMBOL)
-    df = ticker.history(interval="1m", period="1d", auto_adjust=False)
-    df.index = pd.to_datetime(df.index)
-    if df.index.tzinfo is None:
-        df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
-    else:
-        df.index = df.index.tz_convert('America/New_York')
-    df = df.reset_index()
-    df['Close'] = df['Close'].astype(float)
-    df['RSI'] = compute_rsi(df['Close'], window=14)
+    df = fetch_bitstamp_candles(limit=1000, step=60)
+    df['RSI'] = compute_rsi(df['close'], window=14)
     fig = go.Figure(data=[
-        go.Scatter(
-            x=df['Datetime'] if 'Datetime' in df.columns else df['Date'],
-            y=df['RSI'], mode='lines', name='RSI'
-        )
+        go.Scatter(x=df.index, y=df['RSI'], mode='lines', name='RSI')
     ])
     fig.update_layout(
         paper_bgcolor=brand_colors['background'], plot_bgcolor=brand_colors['background'],
@@ -212,18 +193,14 @@ def update_rsi_chart(n):
     Output('order-status','children'),
     Input('buy-btc','n_clicks'), Input('sell-btc','n_clicks'), State('btc-qty','value')
 )
-def execute_order(buy, sell, qty):
+def execute_manual_order(buy, sell, qty):
     ctx = callback_context.triggered_id
-    if not ctx:
-        return ''
+    if not ctx: return ''
     side = OrderSide.BUY if ctx=='buy-btc' else OrderSide.SELL
     positions = trade_client.get_all_positions()
-    available = float(positions[0].qty) if positions else 0.0  # or use a function that aggregates available BTC from the positions
+    available = float(positions[0].qty) if positions else 0.0
     order_qty = min(qty, available)
-    mo = MarketOrderRequest(
-        symbol=ALPACA_SYMBOL, side=side, type=OrderType.MARKET,
-        time_in_force=TimeInForce.GTC, qty=order_qty
-    )
+    mo = MarketOrderRequest(symbol=ALPACA_SYMBOL, side=side, type=OrderType.MARKET, time_in_force=TimeInForce.GTC, qty=order_qty)
     try:
         resp = trade_client.submit_order(order_data=mo)
         return f"✅ Order {resp.id} submitted (filled_qty={resp.filled_qty})"
@@ -240,12 +217,7 @@ def update_positions(n):
         pos = trade_client.get_all_positions() or []
         for p in pos:
             if p.symbol == ALPACA_SYMBOL:
-                rows.append({
-                    'Symbol': p.symbol,
-                    'Qty': p.qty,
-                    'Unrealized P/L': p.unrealized_pl,
-                    'Market Value': p.market_value
-                })
+                rows.append({'Symbol':p.symbol,'Qty':p.qty,'Unrealized P/L':p.unrealized_pl,'Market Value':p.market_value})
     except Exception:
         rows = []
     if not rows:
@@ -258,8 +230,7 @@ def update_positions(n):
     Input('interval','n_intervals')
 )
 def update_orders(n):
-    data = trade_updates_list[-20:]
-    rows = data or [{'event':'None','symbol':'','filled_qty':0,'filled_avg_price':0,'timestamp':''}]
+    rows = trade_updates_list[-20:] or [{'event':'None','symbol':'','filled_qty':0,'filled_avg_price':0,'timestamp':''}]
     cols = [{'name':k,'id':k} for k in rows[0].keys()]
     return rows, cols
 
