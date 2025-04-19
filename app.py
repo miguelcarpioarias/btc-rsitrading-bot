@@ -16,16 +16,15 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.stream import TradingStream
 from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
 from alpaca.trading.requests import MarketOrderRequest
-from alpaca.data.requests import CryptoBarsRequest
-from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 # --- Configuration ---
 API_KEY    = os.getenv('ALPACA_KEY') or os.getenv('ALPACA_API_KEY') or "PK93LZQTSB35L3CL60V5"
 API_SECRET = os.getenv('ALPACA_SECRET') or os.getenv('ALPACA_SECRET_KEY') or "HDn7c1Mp3JVvgq98dphRDJH1nt3She3pe5Y9bJi0"
 trade_client = TradingClient(API_KEY, API_SECRET, paper=True)
 
-data_client = None  # Not used for candlesticks now
-SYMBOL = 'BTC-USD'
+# Symbols
+YF_SYMBOL    = 'BTC-USD'   # yfinance ticker
+ALPACA_SYMBOL = 'BTC/USD'  # Alpaca trading symbol
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -63,38 +62,52 @@ def compute_rsi(series, window=14):
     rs = avg_gain / (avg_loss + 1e-10)
     return 100 - (100 / (1 + rs))
 
-# Trading logic using 1-minute RSI
+
 def rsi_trading_job():
     try:
         # Fetch last 60 one-minute bars via yfinance
-        ticker = yf.Ticker(SYMBOL)
+        ticker = yf.Ticker(YF_SYMBOL)
         df = ticker.history(interval="1m", period="1d", auto_adjust=True)
         df.index = pd.to_datetime(df.index)
-        # Localize & convert to ET
         if df.index.tzinfo is None:
             df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
         else:
             df.index = df.index.tz_convert('America/New_York')
         df['Close'] = df['Close'].astype(float)
-        df['rsi'] = compute_rsi(df['Close'], window=14)
-        last_rsi = df['rsi'].iloc[-1]
+        df['RSI'] = compute_rsi(df['Close'], window=14)
+        last_rsi = df['RSI'].iloc[-1]
         logging.info(f"RSI(1m)={last_rsi:.2f}")
+
+        # Determine flat vs in-position
         positions = trade_client.get_all_positions()
-        flat = not any(p.symbol == SYMBOL and float(p.qty) > 0 for p in positions)
+        # Normalize symbol for comparison (e.g. 'BTC/USD' -> 'BTCUSD')
+        clean_symbol = ALPACA_SYMBOL.replace('/', '')
+        in_pos = any(p.symbol == clean_symbol and float(p.qty) > 0 for p in positions)(p.symbol == ALPACA_SYMBOL and float(p.qty) > 0 for p in positions)
+
         # Buy signal
-        if last_rsi <= 30 and flat:
-            logging.info("RSI <=30; buying 0.5 BTC")
+        if last_rsi <= 30 and not in_pos:
+            logging.info("RSI <=30; sending market BUY 0.5 BTC")
             mo = MarketOrderRequest(
-                symbol='BTC/USD', side=OrderSide.BUY, type=OrderType.MARKET, time_in_force=TimeInForce.GTC, qty=0.5
+                symbol=ALPACA_SYMBOL,
+                side=OrderSide.BUY,
+                type=OrderType.MARKET,
+                time_in_force=TimeInForce.GTC,
+                qty=0.5
             )
             trade_client.submit_order(order_data=mo)
         # Sell signal
-        elif last_rsi >= 70 and not flat:
-            logging.info("RSI >=70; selling 0.5 BTC")
+        elif last_rsi >= 70 and in_pos:
+            logging.info("RSI >=70; sending market SELL 0.5 BTC")
             mo = MarketOrderRequest(
-                symbol='BTC/USD', side=OrderSide.SELL, type=OrderType.MARKET, time_in_force=TimeInForce.GTC, qty=0.5
+                symbol=ALPACA_SYMBOL,
+                side=OrderSide.SELL,
+                type=OrderType.MARKET,
+                time_in_force=TimeInForce.GTC,
+                qty=0.5
             )
             trade_client.submit_order(order_data=mo)
+        else:
+            logging.info("No RSI trade signal or already in correct state.")
     except Exception as e:
         logging.error(f"RSI trading job error: {e}")
 
@@ -109,7 +122,7 @@ server = app.server
 brand_colors = {'background':'#2C3E50', 'text':'#ECF0F1'}
 
 app.layout = dbc.Container([
-    html.H2('Crypto Dashboard (BTC-USD)', style={'color':brand_colors['text']}),
+    html.H2('Crypto Dashboard (BTC/USD)', style={'color':brand_colors['text']}),
     dbc.Row([
         dbc.Col([
             html.Label('BTC Qty', style={'color':brand_colors['text']}),
@@ -140,7 +153,7 @@ app.layout = dbc.Container([
     Output('price-chart','figure'), Input('interval','n_intervals')
 )
 def update_price(n):
-    ticker = yf.Ticker(SYMBOL)
+    ticker = yf.Ticker(YF_SYMBOL)
     df = ticker.history(interval="1m", period="1d", auto_adjust=True)
     df.index = pd.to_datetime(df.index)
     if df.index.tzinfo is None:
@@ -165,7 +178,7 @@ def update_price(n):
     Output('rsi-chart','figure'), Input('interval','n_intervals')
 )
 def update_rsi_chart(n):
-    ticker = yf.Ticker(SYMBOL)
+    ticker = yf.Ticker(YF_SYMBOL)
     df = ticker.history(interval="1m", period="1d", auto_adjust=True)
     df.index = pd.to_datetime(df.index)
     if df.index.tzinfo is None:
@@ -176,7 +189,10 @@ def update_rsi_chart(n):
     df['Close'] = df['Close'].astype(float)
     df['RSI'] = compute_rsi(df['Close'], window=14)
     fig = go.Figure(data=[
-        go.Scatter(x=df['Datetime'] if 'Datetime' in df.columns else df['Date'], y=df['RSI'], mode='lines', name='RSI')
+        go.Scatter(
+            x=df['Datetime'] if 'Datetime' in df.columns else df['Date'],
+            y=df['RSI'], mode='lines', name='RSI'
+        )
     ])
     fig.update_layout(
         paper_bgcolor=brand_colors['background'], plot_bgcolor=brand_colors['background'],
@@ -190,9 +206,13 @@ def update_rsi_chart(n):
 )
 def execute_order(buy, sell, qty):
     ctx = callback_context.triggered_id
-    if not ctx: return ''
+    if not ctx:
+        return ''
     side = OrderSide.BUY if ctx=='buy-btc' else OrderSide.SELL
-    mo = MarketOrderRequest(symbol='BTC/USD', side=side, type=OrderType.MARKET, time_in_force=TimeInForce.GTC, qty=qty)
+    mo = MarketOrderRequest(
+        symbol=ALPACA_SYMBOL, side=side, type=OrderType.MARKET,
+        time_in_force=TimeInForce.GTC, qty=qty
+    )
     try:
         resp = trade_client.submit_order(order_data=mo)
         return f"✅ Order {resp.id} submitted (filled_qty={resp.filled_qty})"
@@ -208,8 +228,13 @@ def update_positions(n):
     try:
         pos = trade_client.get_all_positions() or []
         for p in pos:
-            if p.symbol.replace('/','-') == SYMBOL:
-                rows.append({'Symbol':p.symbol,'Qty':p.qty,'Unrealized P/L':p.unrealized_pl,'Market Value':p.market_value})
+            if p.symbol == ALPACA_SYMBOL:
+                rows.append({
+                    'Symbol': p.symbol,
+                    'Qty': p.qty,
+                    'Unrealized P/L': p.unrealized_pl,
+                    'Market Value': p.market_value
+                })
     except Exception:
         rows = []
     if not rows:
