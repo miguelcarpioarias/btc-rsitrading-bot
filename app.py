@@ -74,35 +74,28 @@ def fetch_bitstamp_candles(limit=1000, step=60):
     return df.set_index('timestamp')
 
 # --- RSI Trading Job ---
+# --- Modified RSI Trading Job ---
 def rsi_trading_job():
     try:
-        # Fetch and compute RSI
+        # [Keep existing data fetching and RSI calculation unchanged]
         df = fetch_bitstamp_candles(limit=1000, step=60)
         df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
         df['RSI'] = compute_rsi(df['close'], window=14)
         last_rsi = df['RSI'].iloc[-1]
         
-        # Get account & positions
         account = trade_client.get_account()
         usd_avail = float(account.cash)
-        positions = trade_client.get_all_positions()
         
-        # Normalize symbol for comparison
-        clean_symbol = ALPACA_SYMBOL.replace("/", "")
-        
-        # Find BTC position if it exists
-        btc_pos = next((p for p in positions if p.symbol == clean_symbol), None)
-        current_qty = float(btc_pos.qty) if btc_pos else 0.0
-
-        logging.info(f"RSI(1m)={last_rsi:.2f}, current_qty={current_qty:.8f}, cash=${usd_avail:.2f}")
-
-        # BUY if oversold and flat
-        if last_rsi <= 30 and current_qty == 0:
-            logging.info("RSI ≤ 30 & flat → placing BUY")
-            price      = df['close'].iloc[-1]
+        # [Key Change 1: Remove position check for buying]
+        if last_rsi <= 30:  # Buy regardless of existing position
+            logging.info(f"RSI ≤30 → Attempting BUY (stacking)")
+            price = df['close'].iloc[-1]
+            
+            # Buy $100 worth each time (or whatever's available)
             target_usd = min(100, usd_avail)
-            buy_qty    = round(target_usd / price - 1e-8, 8)
-            if buy_qty >= 0:
+            buy_qty = round(target_usd / price - 1e-8, 8)
+            
+            if buy_qty >= 0 and target_usd >= 5:  # Alpaca's $5 minimum
                 mo = MarketOrderRequest(
                     symbol=ALPACA_SYMBOL,
                     side=OrderSide.BUY,
@@ -111,29 +104,36 @@ def rsi_trading_job():
                     qty=buy_qty
                 )
                 resp = trade_client.submit_order(order_data=mo)
-                logging.info(f"BUY executed: qty={buy_qty} @ {price:.2f} → order_id={resp.id}")
+                logging.info(f"BUY executed: +{buy_qty} BTC (${target_usd:.2f})")
             else:
-                logging.info("Not enough USD to buy any BTC")
+                logging.warning("Insufficient funds for BUY")
 
-        # SELL if overbought and long
-        elif last_rsi >= 70 and current_qty > 0:
-            logging.info("RSI ≥ 70 & in position → placing SELL")
-            sell_qty = round(current_qty - 1e-8, 8)
-            mo = MarketOrderRequest(
-                symbol=ALPACA_SYMBOL,
-                side=OrderSide.SELL,
-                type=OrderType.MARKET,
-                time_in_force=TimeInForce.GTC,
-                qty=sell_qty
-            )
-            resp = trade_client.submit_order(order_data=mo)
-            logging.info(f"SELL executed: qty={sell_qty} → order_id={resp.id}")
+        # [Key Change 2: Sell ENTIRE position when RSI ≥70]
+        elif last_rsi >= 70:
+            positions = trade_client.get_all_positions()
+            clean_symbol = ALPACA_SYMBOL.replace("/", "")
+            btc_pos = next((p for p in positions if p.symbol == clean_symbol), None)
+            
+            if btc_pos:  # Sell only if position exists
+                sell_qty = round(float(btc_pos.qty) - 1e-8, 8)
+                logging.info(f"RSI ≥70 → Selling ENTIRE position: {sell_qty} BTC")
+                
+                mo = MarketOrderRequest(
+                    symbol=ALPACA_SYMBOL,
+                    side=OrderSide.SELL,
+                    type=OrderType.MARKET,
+                    time_in_force=TimeInForce.GTC,
+                    qty=sell_qty
+                )
+                resp = trade_client.submit_order(order_data=mo)
+                logging.info(f"SELL executed: -{sell_qty} BTC")
 
         else:
             logging.info("No trade signal")
 
     except Exception as e:
         logging.error(f"RSI trading job error: {e}")
+
 
 # Schedule RSI job every minute
 scheduler = BackgroundScheduler(timezone='US/Eastern')
