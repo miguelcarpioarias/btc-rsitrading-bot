@@ -74,31 +74,23 @@ def fetch_bitstamp_candles(limit=1000, step=60):
     return df.set_index('timestamp')
 
 # --- RSI Trading Job ---
-# --- Modified RSI Trading Job ---
 def rsi_trading_job():
     try:
-        # [Keep existing data fetching and RSI calculation unchanged]
         df = fetch_bitstamp_candles(limit=1000, step=60)
         df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
         df['RSI'] = compute_rsi(df['close'], window=14)
         last_rsi = df['RSI'].iloc[-1]
         logging.info(f"Latest RSI: {last_rsi:.2f}")
-        
-        # [Key Change 1: Remove position check for buying]
-        # Check if we have an existing position
+
         account = trade_client.get_account()
         usd_avail = float(account.cash)
-        
-        # [Key Change 1: Remove position check for buying]
-        if last_rsi <= 30:  # Buy regardless of existing position
+
+        if last_rsi <= 30:
             logging.info(f"RSI ≤30 → Attempting BUY (stacking)")
             price = df['close'].iloc[-1]
-            
-            # Buy $100 worth each time (or whatever's available)
             target_usd = min(100, usd_avail)
             buy_qty = round(target_usd / price - 1e-8, 8)
-            
-            if buy_qty >= 0 and target_usd >= 5:  # Alpaca's $5 minimum
+            if buy_qty >= 0 and target_usd >= 5:
                 mo = MarketOrderRequest(
                     symbol=ALPACA_SYMBOL,
                     side=OrderSide.BUY,
@@ -111,17 +103,13 @@ def rsi_trading_job():
             else:
                 logging.warning("Insufficient funds for BUY")
 
-        # [Key Change 2: Sell ENTIRE position when RSI ≥70]
         elif last_rsi >= 70:
             logging.info(f"RSI ≥70 → Attempting SELL (liquidating)")
             positions = trade_client.get_all_positions()
             clean_symbol = ALPACA_SYMBOL.replace("/", "")
             btc_pos = next((p for p in positions if p.symbol == clean_symbol), None)
-            
-            if btc_pos:  # Sell only if position exists
+            if btc_pos:
                 sell_qty = round(float(btc_pos.qty) - 1e-8, 8)
-                logging.info(f"RSI ≥70 → Selling ENTIRE position: {sell_qty} BTC")
-                
                 mo = MarketOrderRequest(
                     symbol=ALPACA_SYMBOL,
                     side=OrderSide.SELL,
@@ -131,13 +119,11 @@ def rsi_trading_job():
                 )
                 resp = trade_client.submit_order(order_data=mo)
                 logging.info(f"SELL executed: -{sell_qty} BTC")
-
         else:
             logging.info("No trade signal")
 
     except Exception as e:
         logging.error(f"RSI trading job error: {e}")
-
 
 # Schedule RSI job every minute
 scheduler = BackgroundScheduler(timezone='US/Eastern')
@@ -151,6 +137,7 @@ brand_colors = {'background': '#2C3E50', 'text': '#ECF0F1'}
 
 app.layout = dbc.Container([
     html.H2('Crypto Dashboard (BTC/USD)', style={'color': brand_colors['text']}),
+
     dbc.Row([
         dbc.Col([
             html.Label('BTC Qty', style={'color': brand_colors['text']}),
@@ -163,19 +150,27 @@ app.layout = dbc.Container([
         ], width=3),
         dbc.Col(dcc.Graph(id='price-chart'), width=9)
     ]),
+
     dbc.Row(dcc.Graph(id='rsi-chart'), className='mt-4'),
+
+    # ← New performance panel
+    dbc.Row(dcc.Graph(id='performance-chart'), className='mt-4'),
+
     dcc.Interval(id='interval', interval=30*1000, n_intervals=0),
+
     dbc.Row(dbc.Col(dash_table.DataTable(
         id='positions-table', page_size=10,
         style_header={'backgroundColor': brand_colors['background'], 'color': brand_colors['text']},
         style_cell={'backgroundColor': brand_colors['background'], 'color': brand_colors['text']}
     )), className='mt-4'),
+
     html.H4('Order Stream', style={'color': brand_colors['text'], 'marginTop': '20px'}),
     dbc.Row(dbc.Col(dash_table.DataTable(
         id='orders-table', page_size=10,
         style_header={'backgroundColor': brand_colors['background'], 'color': brand_colors['text']},
         style_cell={'backgroundColor': brand_colors['background'], 'color': brand_colors['text']}
     )), className='mt-2')
+
 ], fluid=True, style={'backgroundColor': brand_colors['background'], 'padding': '20px'})
 
 # --- Callbacks ---
@@ -185,31 +180,22 @@ app.layout = dbc.Container([
 )
 def update_price(n):
     df = fetch_bitstamp_candles(limit=1000, step=60)
-    # build a display-only index in NY time
-    display_idx = pd.to_datetime(df.index)
-    display_idx = display_idx.tz_localize('UTC').tz_convert('America/New_York')
-    
-    fig = go.Figure(data=[
-        go.Candlestick(
-            x=display_idx,
-            open=df['open'], high=df['high'],
-            low=df['low'], close=df['close'],
-            increasing_line_color='green',
-            decreasing_line_color='red'
-        )
-    ])
+    display_idx = pd.to_datetime(df.index).tz_localize('UTC').tz_convert('America/New_York')
+    fig = go.Figure(data=[go.Candlestick(
+        x=display_idx,
+        open=df['open'], high=df['high'],
+        low=df['low'], close=df['close'],
+        increasing_line_color='green',
+        decreasing_line_color='red'
+    )])
     fig.update_layout(
         paper_bgcolor=brand_colors['background'],
         plot_bgcolor=brand_colors['background'],
         font_color=brand_colors['text'],
         xaxis_rangeslider_visible=False,
-        xaxis=dict(
-            title='Time (ET)',
-            tickformat='%H:%M\n%b %d'
-        )
+        xaxis=dict(title='Time (ET)', tickformat='%H:%M\n%b %d')
     )
     return fig
-
 
 @app.callback(
     Output('rsi-chart', 'figure'),
@@ -218,31 +204,21 @@ def update_price(n):
 def update_rsi_chart(n):
     df = fetch_bitstamp_candles(limit=1000, step=60)
     df['RSI'] = compute_rsi(df['close'], window=14)
-
-    # build a display-only index in NY time
-    display_idx = pd.to_datetime(df.index)
-    display_idx = display_idx.tz_localize('UTC').tz_convert('America/New_York')
-    
-    fig = go.Figure(data=[
-        go.Scatter(
-            x=display_idx,
-            y=df['RSI'],
-            mode='lines',
-            name='RSI'
-        )
-    ])
+    display_idx = pd.to_datetime(df.index).tz_localize('UTC').tz_convert('America/New_York')
+    fig = go.Figure(data=[go.Scatter(
+        x=display_idx,
+        y=df['RSI'],
+        mode='lines',
+        name='RSI'
+    )])
     fig.update_layout(
         paper_bgcolor=brand_colors['background'],
         plot_bgcolor=brand_colors['background'],
         font_color=brand_colors['text'],
         yaxis=dict(range=[0,100]),
-        xaxis=dict(
-            title='Time (ET)',
-            tickformat='%H:%M\n%b %d'
-        )
+        xaxis=dict(title='Time (ET)', tickformat='%H:%M\n%b %d')
     )
     return fig
-
 
 @app.callback(
     Output('order-status', 'children'),
@@ -305,6 +281,75 @@ def update_orders(n):
     }]
     cols = [{'name': k, 'id': k} for k in rows[0].keys()]
     return rows, cols
+
+# ← New callback for performance + cumulative P&L
+@app.callback(
+    Output('performance-chart', 'figure'),
+    Input('interval', 'n_intervals')
+)
+def update_performance(n):
+    df = fetch_bitstamp_candles(limit=1000, step=60)
+    df['RSI'] = compute_rsi(df['close'], window=14)
+
+    trades = []
+    in_position = False
+    buy_price = buy_time = None
+
+    for ts, row in df.iterrows():
+        price = row['close']
+        rsi = row['RSI']
+        if not in_position and rsi <= 30:
+            in_position = True
+            buy_price = price
+            buy_time = ts
+        elif in_position and rsi >= 70:
+            ret = (price - buy_price) / buy_price * 100
+            trades.append({
+                'buy_time': buy_time,
+                'sell_time': ts,
+                'return': ret
+            })
+            in_position = False
+
+    trades_df = pd.DataFrame(trades)
+    if trades_df.empty:
+        return go.Figure()
+
+    trades_df['cumulative'] = trades_df['return'].cumsum()
+    wins = int((trades_df['return'] > 0).sum())
+    losses = int((trades_df['return'] <= 0).sum())
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=trades_df['sell_time'],
+        y=trades_df['return'],
+        marker_color=['green' if r>0 else 'red' for r in trades_df['return']],
+        name='Trade Return (%)'
+    ))
+    fig.add_trace(go.Scatter(
+        x=trades_df['sell_time'],
+        y=trades_df['cumulative'],
+        mode='lines+markers',
+        name='Cumulative P&L (%)',
+        yaxis='y2'
+    ))
+
+    fig.update_layout(
+        title=f"RSI Strategy Returns — Wins: {wins}  Losses: {losses}",
+        xaxis=dict(title="Sell Time"),
+        yaxis=dict(title="Return per Trade (%)"),
+        yaxis2=dict(
+            title="Cumulative P&L (%)",
+            overlaying='y',
+            side='right'
+        ),
+        legend=dict(x=0.01, y=0.99),
+        paper_bgcolor=brand_colors['background'],
+        plot_bgcolor=brand_colors['background'],
+        font_color=brand_colors['text']
+    )
+
+    return fig
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
