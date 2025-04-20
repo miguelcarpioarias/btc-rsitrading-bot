@@ -185,20 +185,31 @@ app.layout = dbc.Container([
 )
 def update_price(n):
     df = fetch_bitstamp_candles(limit=1000, step=60)
+    # build a display-only index in NY time
+    display_idx = pd.to_datetime(df.index)
+    display_idx = display_idx.tz_localize('UTC').tz_convert('America/New_York')
+    
     fig = go.Figure(data=[
         go.Candlestick(
-            x=df.index, open=df['open'], high=df['high'],
+            x=display_idx,
+            open=df['open'], high=df['high'],
             low=df['low'], close=df['close'],
-            increasing_line_color='green', decreasing_line_color='red'
+            increasing_line_color='green',
+            decreasing_line_color='red'
         )
     ])
     fig.update_layout(
         paper_bgcolor=brand_colors['background'],
         plot_bgcolor=brand_colors['background'],
         font_color=brand_colors['text'],
-        xaxis_rangeslider_visible=False
+        xaxis_rangeslider_visible=False,
+        xaxis=dict(
+            title='Time (ET)',
+            tickformat='%H:%M\n%b %d'
+        )
     )
     return fig
+
 
 @app.callback(
     Output('rsi-chart', 'figure'),
@@ -207,14 +218,31 @@ def update_price(n):
 def update_rsi_chart(n):
     df = fetch_bitstamp_candles(limit=1000, step=60)
     df['RSI'] = compute_rsi(df['close'], window=14)
-    fig = go.Figure(data=[go.Scatter(x=df.index, y=df['RSI'], mode='lines', name='RSI')])
+
+    # build a display-only index in NY time
+    display_idx = pd.to_datetime(df.index)
+    display_idx = display_idx.tz_localize('UTC').tz_convert('America/New_York')
+    
+    fig = go.Figure(data=[
+        go.Scatter(
+            x=display_idx,
+            y=df['RSI'],
+            mode='lines',
+            name='RSI'
+        )
+    ])
     fig.update_layout(
         paper_bgcolor=brand_colors['background'],
         plot_bgcolor=brand_colors['background'],
         font_color=brand_colors['text'],
-        yaxis=dict(range=[0,100])
+        yaxis=dict(range=[0,100]),
+        xaxis=dict(
+            title='Time (ET)',
+            tickformat='%H:%M\n%b %d'
+        )
     )
     return fig
+
 
 @app.callback(
     Output('order-status', 'children'),
