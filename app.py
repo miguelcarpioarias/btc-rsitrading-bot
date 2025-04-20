@@ -15,7 +15,8 @@ import requests
 from alpaca.trading.client import TradingClient
 from alpaca.trading.stream import TradingStream
 from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
-from alpaca.trading.requests import MarketOrderRequest, GetLatestTradeRequest
+from alpaca.trading.requests import MarketOrderRequest
+from alpaca.data.requests    import GetLatestTradeRequest
 
 # --- Configuration ---
 API_KEY    = os.getenv('ALPACA_KEY') or os.getenv('ALPACA_API_KEY') or "PK93LZQTSB35L3CL60V5"
