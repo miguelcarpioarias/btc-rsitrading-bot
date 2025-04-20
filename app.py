@@ -16,7 +16,6 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.stream import TradingStream
 from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
 from alpaca.trading.requests import MarketOrderRequest
-from alpaca.data.requests    import GetLatestTradeRequest
 
 # --- Configuration ---
 API_KEY    = os.getenv('ALPACA_KEY') or os.getenv('ALPACA_API_KEY') or "PK93LZQTSB35L3CL60V5"
@@ -92,10 +91,8 @@ def rsi_trading_job():
 
         if last_rsi <= 30 and not in_pos:
             logging.info("RSI <=30; placing BUY by qty")
-            latest = trade_client.get_latest_trade(
-                GetLatestTradeRequest(symbol_or_symbols=[ALPACA_SYMBOL])
-            )[ALPACA_SYMBOL]
-            price = float(latest.price)
+            # use the last fetched close price
+            price = df['close'].iloc[-1]
             target_usd = min(100, usd_avail)
             buy_qty = round(target_usd / price - 1e-8, 8)
             if buy_qty > 0:
