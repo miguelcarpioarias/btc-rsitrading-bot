@@ -82,7 +82,10 @@ def rsi_trading_job():
         df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
         df['RSI'] = compute_rsi(df['close'], window=14)
         last_rsi = df['RSI'].iloc[-1]
+        logging.info(f"Latest RSI: {last_rsi:.2f}")
         
+        # [Key Change 1: Remove position check for buying]
+        # Check if we have an existing position
         account = trade_client.get_account()
         usd_avail = float(account.cash)
         
@@ -110,6 +113,7 @@ def rsi_trading_job():
 
         # [Key Change 2: Sell ENTIRE position when RSI ≥70]
         elif last_rsi >= 70:
+            logging.info(f"RSI ≥70 → Attempting SELL (liquidating)")
             positions = trade_client.get_all_positions()
             clean_symbol = ALPACA_SYMBOL.replace("/", "")
             btc_pos = next((p for p in positions if p.symbol == clean_symbol), None)
