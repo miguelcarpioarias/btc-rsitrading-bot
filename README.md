@@ -1,2 +1,2 @@
-# btc-short-trader
+# btc-rsitrading-bot
 Short-Trading_bot_forecastingandAlpacaAPI
