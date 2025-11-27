@@ -17,11 +17,29 @@ from sqlalchemy.orm import Session
 # Load environment variables
 load_dotenv()
 
-# Alpaca clients
-from alpaca.trading.client import TradingClient
-from alpaca.trading.stream import TradingStream
-from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
-from alpaca.trading.requests import MarketOrderRequest
+# Alpaca clients (v1 SDK)
+try:
+    # Try v2 SDK first (newer)
+    from alpaca.trading.client import TradingClient
+    from alpaca.trading.stream import TradingStream
+    from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
+    from alpaca.trading.requests import MarketOrderRequest
+    SDK_VERSION = 2
+except ImportError:
+    # Fall back to v1 SDK
+    import alpaca_trade_api as tradeapi
+    SDK_VERSION = 1
+    # v1 SDK uses string constants for enums
+    class OrderSide:
+        BUY = 'buy'
+        SELL = 'sell'
+    class OrderType:
+        MARKET = 'market'
+        LIMIT = 'limit'
+    class TimeInForce:
+        DAY = 'day'
+        GTC = 'gtc'
+        OPENPAREN = 'opg'
 
 # Database
 from database import Trade, Order, PerformanceMetric, AccountBalance, init_db, get_session
@@ -36,7 +54,13 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 if not API_KEY or not API_SECRET:
     raise ValueError("ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in environment variables")
 
-trade_client = TradingClient(API_KEY, API_SECRET, paper=ALPACA_PAPER)
+# Initialize Alpaca client based on SDK version
+if SDK_VERSION == 2:
+    trade_client = TradingClient(API_KEY, API_SECRET, paper=ALPACA_PAPER)
+else:
+    # v1 SDK
+    base_url = 'https://paper-api.alpaca.markets' if ALPACA_PAPER else 'https://api.alpaca.markets'
+    trade_client = tradeapi.REST(API_KEY, API_SECRET, base_url=base_url)
 
 # Symbols
 BITSTAMP_URL = "https://www.bitstamp.net/api/v2/ohlc/btcusd/"
@@ -112,9 +136,12 @@ async def trade_updates_handler(update):
         logger.error(f"Stream handler error: {e}")
 
 def start_trade_stream():
-    stream = TradingStream(API_KEY, API_SECRET, paper=True)
-    stream.subscribe_trade_updates(trade_updates_handler)
-    stream.run()
+    if SDK_VERSION == 2:
+        stream = TradingStream(API_KEY, API_SECRET, paper=True)
+        stream.subscribe_trade_updates(trade_updates_handler)
+        stream.run()
+    else:
+        logger.warning("Trade streaming not available with v1 SDK - this is normal for local testing")
 
 threading.Thread(target=start_trade_stream, daemon=True).start()
 
