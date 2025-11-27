@@ -14,8 +14,15 @@ import requests
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from .env file ONLY if in development (file exists)
+# On Render/production, environment variables are set directly via Render interface
+import sys
+if os.path.exists('.env'):
+    load_dotenv()
+else:
+    # On production (Render), only load override from .env.local if it exists
+    if os.path.exists('.env.local'):
+        load_dotenv('.env.local')
 
 # Alpaca clients (v1 SDK)
 try:
@@ -44,29 +51,30 @@ except ImportError:
 # Database
 from database import Trade, Order, PerformanceMetric, AccountBalance, init_db, get_session
 
+# --- Set up logging FIRST (before any logging calls) ---
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger(__name__)
+
 # --- Configuration from Environment ---
-API_KEY = os.getenv('ALPACA_API_KEY')
-API_SECRET = os.getenv('ALPACA_SECRET_KEY')
+API_KEY = os.getenv('ALPACA_API_KEY', '').strip()
+API_SECRET = os.getenv('ALPACA_SECRET_KEY', '').strip()
 ALPACA_PAPER = os.getenv('ALPACA_PAPER', 'true').lower() == 'true'
 DATABASE_URL = os.getenv('DATABASE_URL')
 
-# Validate required environment variables
-if not API_KEY or not API_SECRET:
-    raise ValueError("ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in environment variables")
+# Reject placeholder/example values from .env
+PLACEHOLDER_PATTERNS = ['your_alpaca', 'example', 'test_key', 'placeholder']
+if API_KEY and any(pattern in API_KEY.lower() for pattern in PLACEHOLDER_PATTERNS):
+    logger.warning(f"Placeholder API key detected: {API_KEY[:20]}... - using demo mode")
+    API_KEY = None
+if API_SECRET and any(pattern in API_SECRET.lower() for pattern in PLACEHOLDER_PATTERNS):
+    logger.warning(f"Placeholder secret key detected - using demo mode")
+    API_SECRET = None
 
-# Initialize Alpaca client based on SDK version
-if SDK_VERSION == 2:
-    trade_client = TradingClient(API_KEY, API_SECRET, paper=ALPACA_PAPER)
-else:
-    # v1 SDK
-    base_url = 'https://paper-api.alpaca.markets' if ALPACA_PAPER else 'https://api.alpaca.markets'
-    trade_client = tradeapi.REST(API_KEY, API_SECRET, base_url=base_url)
-
-# Symbols
-BITSTAMP_URL = "https://www.bitstamp.net/api/v2/ohlc/btcusd/"
-ALPACA_SYMBOL = "BTC/USD"
-
-# --- Strategy Parameters from Environment ---
+# --- Strategy Parameters from Environment (needed before client init) ---
 RSI_WINDOW = int(os.getenv('RSI_WINDOW', 14))
 RSI_OVERSOLD = int(os.getenv('RSI_OVERSOLD', 30))
 RSI_OVERBOUGHT = int(os.getenv('RSI_OVERBOUGHT', 70))
@@ -78,13 +86,29 @@ STOP_LOSS_PERCENT = float(os.getenv('STOP_LOSS_PERCENT', 3.0))
 TRADING_ENABLED = os.getenv('TRADING_ENABLED', 'true').lower() == 'true'
 TRADING_INTERVAL_MINUTES = int(os.getenv('TRADING_INTERVAL_MINUTES', 1))
 
-# Set up logging
-LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-)
-logger = logging.getLogger(__name__)
+# Initialize trade client (will be None if API keys are not set)
+trade_client = None
+
+if API_KEY and API_SECRET and TRADING_ENABLED:
+    try:
+        # Initialize Alpaca client based on SDK version
+        if SDK_VERSION == 2:
+            trade_client = TradingClient(API_KEY, API_SECRET, paper=ALPACA_PAPER)
+        else:
+            # v1 SDK
+            base_url = 'https://paper-api.alpaca.markets' if ALPACA_PAPER else 'https://api.alpaca.markets'
+            trade_client = tradeapi.REST(API_KEY, API_SECRET, base_url=base_url)
+        logger.info("Alpaca client initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Alpaca client: {e}")
+        trade_client = None
+else:
+    logger.warning("Alpaca API credentials not provided or trading disabled - running in demo mode")
+    logger.warning("Set ALPACA_API_KEY, ALPACA_SECRET_KEY, and TRADING_ENABLED=true to enable live trading")
+
+# Symbols
+BITSTAMP_URL = "https://www.bitstamp.net/api/v2/ohlc/btcusd/"
+ALPACA_SYMBOL = "BTC/USD"
 
 # Initialize database
 try:
@@ -246,6 +270,10 @@ def save_account_balance_to_db(cash, portfolio_value, buying_power=None):
 def rsi_trading_job():
     if not TRADING_ENABLED:
         logger.info("Trading is disabled")
+        return
+    
+    if not trade_client:
+        logger.warning("Trade client not initialized - skipping trading job. Set ALPACA_API_KEY and ALPACA_SECRET_KEY to enable trading")
         return
     
     try:
