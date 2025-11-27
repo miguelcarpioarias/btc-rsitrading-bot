@@ -5,6 +5,7 @@ import dash_bootstrap_components as dbc
 from dash import dcc, html, Input, Output, State, callback_context, dash_table
 import plotly.graph_objs as go
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -53,7 +54,7 @@ def start_trade_stream():
 
 threading.Thread(target=start_trade_stream, daemon=True).start()
 
-# --- RSI Computation & Fetching Candles ---
+# --- Technical Indicators & Fetching Candles ---
 def compute_rsi(series, window=14):
     delta = series.diff().dropna()
     gain = delta.where(delta > 0, 0.0)
@@ -62,6 +63,27 @@ def compute_rsi(series, window=14):
     avg_loss = loss.rolling(window).mean()
     rs = avg_gain / (avg_loss + 1e-10)
     return 100 - (100 / (1 + rs))
+
+def compute_atr(high, low, close, window=14):
+    """Average True Range for volatility measurement"""
+    tr1 = high - low
+    tr2 = abs(high - close.shift(1))
+    tr3 = abs(low - close.shift(1))
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    return tr.rolling(window).mean()
+
+def compute_macd(series, fast=12, slow=26, signal=9):
+    """MACD for momentum confirmation"""
+    ema_fast = series.ewm(span=fast).mean()
+    ema_slow = series.ewm(span=slow).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal).mean()
+    histogram = macd_line - signal_line
+    return macd_line, signal_line, histogram
+
+def compute_sma(series, window=50):
+    """Simple Moving Average for trend filter"""
+    return series.rolling(window).mean()
 
 def fetch_bitstamp_candles(limit=1000, step=60):
     params = {'step': step, 'limit': limit}
@@ -73,24 +95,60 @@ def fetch_bitstamp_candles(limit=1000, step=60):
         df[col] = df[col].astype(float)
     return df.set_index('timestamp')
 
-# --- RSI Trading Job ---
+# --- Improved RSI Trading Strategy with Risk Management ---
+active_trades = {}  # Track open positions for stop-loss management
+
+def calculate_position_size(account_balance, risk_percent=1.0):
+    """
+    Kelly Criterion adapted approach: Risk 1% of account per trade.
+    Conservative compared to full Kelly to avoid drawdowns.
+    """
+    return (account_balance * risk_percent) / 100
+
 def rsi_trading_job():
     try:
         df = fetch_bitstamp_candles(limit=1000, step=60)
         df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
+        
+        # Compute technical indicators
         df['RSI'] = compute_rsi(df['close'], window=14)
+        df['MACD'], df['MACD_Signal'], df['MACD_Hist'] = compute_macd(df['close'])
+        df['ATR'] = compute_atr(df['high'], df['low'], df['close'], window=14)
+        df['SMA50'] = compute_sma(df['close'], window=50)
+        
         last_rsi = df['RSI'].iloc[-1]
-        logging.info(f"Latest RSI: {last_rsi:.2f}")
-
+        last_macd_hist = df['MACD_Hist'].iloc[-1]
+        last_atr = df['ATR'].iloc[-1]
+        price = df['close'].iloc[-1]
+        sma50 = df['SMA50'].iloc[-1]
+        volatility_pct = (last_atr / price) * 100
+        
         account = trade_client.get_account()
         usd_avail = float(account.cash)
-
-        if last_rsi <= 30:
-            logging.info(f"RSI ≤30 → Attempting BUY (stacking)")
-            price = df['close'].iloc[-1]
-            target_usd = min(100, usd_avail)
+        account_balance = float(account.portfolio_value)
+        
+        logging.info(f"Price: ${price:.2f} | RSI: {last_rsi:.2f} | ATR: {last_atr:.2f} ({volatility_pct:.2f}%) | SMA50: ${sma50:.2f}")
+        
+        # --- BUY SIGNAL CONDITIONS ---
+        # 1. RSI oversold (≤ 30)
+        # 2. MACD histogram positive (bullish momentum)
+        # 3. Price above SMA50 (uptrend confirmation)
+        # 4. Volatility reasonable (< 5% ATR to avoid extremes)
+        buy_signal = (
+            last_rsi <= 30 and 
+            last_macd_hist > 0 and 
+            price > sma50 and 
+            volatility_pct < 5.0
+        )
+        
+        if buy_signal and usd_avail >= 5:
+            logging.info(f"🟢 BUY SIGNAL: RSI={last_rsi:.2f}, MACD={last_macd_hist:.4f}, Price>${price:.2f} > SMA50${sma50:.2f}")
+            
+            # Risk 1% of portfolio
+            target_usd = min(calculate_position_size(account_balance, risk_percent=1.0), usd_avail)
             buy_qty = round(target_usd / price - 1e-8, 8)
-            if buy_qty >= 0 and target_usd >= 5:
+            
+            if buy_qty > 0:
                 mo = MarketOrderRequest(
                     symbol=ALPACA_SYMBOL,
                     side=OrderSide.BUY,
@@ -99,17 +157,37 @@ def rsi_trading_job():
                     qty=buy_qty
                 )
                 resp = trade_client.submit_order(order_data=mo)
-                logging.info(f"BUY executed: +{buy_qty} BTC (${target_usd:.2f})")
-            else:
-                logging.warning("Insufficient funds for BUY")
-
-        elif last_rsi >= 70:
-            logging.info(f"RSI ≥70 → Attempting SELL (liquidating)")
+                
+                # Track this trade for stop-loss
+                stop_loss_price = price * 0.97  # 3% stop-loss
+                active_trades[ALPACA_SYMBOL] = {
+                    'entry_price': price,
+                    'entry_qty': buy_qty,
+                    'stop_loss': stop_loss_price,
+                    'timestamp': datetime.now(ZoneInfo('America/New_York'))
+                }
+                
+                logging.info(f"BUY executed: +{buy_qty} BTC @ ${price:.2f} | Stop-Loss: ${stop_loss_price:.2f} | Risk: ${target_usd:.2f}")
+        
+        # --- SELL SIGNAL CONDITIONS ---
+        # 1. RSI overbought (≥ 70)
+        # 2. MACD histogram negative (bearish momentum)
+        # 3. Price below SMA50 (downtrend confirmation)
+        sell_signal = (
+            last_rsi >= 70 and 
+            last_macd_hist < 0 and 
+            price < sma50
+        )
+        
+        if sell_signal:
             positions = trade_client.get_all_positions()
             clean_symbol = ALPACA_SYMBOL.replace("/", "")
             btc_pos = next((p for p in positions if p.symbol == clean_symbol), None)
+            
             if btc_pos:
+                logging.info(f"🔴 SELL SIGNAL: RSI={last_rsi:.2f}, MACD={last_macd_hist:.4f}, Price${price:.2f} < SMA50${sma50:.2f}")
                 sell_qty = round(float(btc_pos.qty) - 1e-8, 8)
+                
                 mo = MarketOrderRequest(
                     symbol=ALPACA_SYMBOL,
                     side=OrderSide.SELL,
@@ -118,9 +196,39 @@ def rsi_trading_job():
                     qty=sell_qty
                 )
                 resp = trade_client.submit_order(order_data=mo)
-                logging.info(f"SELL executed: -{sell_qty} BTC")
+                logging.info(f"SELL executed: -{sell_qty} BTC @ ${price:.2f}")
+                
+                if ALPACA_SYMBOL in active_trades:
+                    del active_trades[ALPACA_SYMBOL]
+        
+        # --- STOP-LOSS CHECK ---
+        # Exit position if price hits stop-loss (risk management)
+        if ALPACA_SYMBOL in active_trades:
+            trade = active_trades[ALPACA_SYMBOL]
+            if price <= trade['stop_loss']:
+                positions = trade_client.get_all_positions()
+                clean_symbol = ALPACA_SYMBOL.replace("/", "")
+                btc_pos = next((p for p in positions if p.symbol == clean_symbol), None)
+                
+                if btc_pos:
+                    loss_pct = ((price - trade['entry_price']) / trade['entry_price']) * 100
+                    logging.warning(f"🛑 STOP-LOSS TRIGGERED: Price ${price:.2f} <= Stop ${trade['stop_loss']:.2f} | Loss: {loss_pct:.2f}%")
+                    
+                    sell_qty = round(float(btc_pos.qty) - 1e-8, 8)
+                    mo = MarketOrderRequest(
+                        symbol=ALPACA_SYMBOL,
+                        side=OrderSide.SELL,
+                        type=OrderType.MARKET,
+                        time_in_force=TimeInForce.GTC,
+                        qty=sell_qty
+                    )
+                    resp = trade_client.submit_order(order_data=mo)
+                    logging.info(f"Stop-loss SELL executed: -{sell_qty} BTC @ ${price:.2f}")
+                    
+                    del active_trades[ALPACA_SYMBOL]
+        
         else:
-            logging.info("No trade signal")
+            logging.info("No trade signal (insufficient confluence or high volatility)")
 
     except Exception as e:
         logging.error(f"RSI trading job error: {e}")
@@ -282,7 +390,7 @@ def update_orders(n):
     cols = [{'name': k, 'id': k} for k in rows[0].keys()]
     return rows, cols
 
-# ← New callback for performance + cumulative P&L
+# ← Enhanced callback for performance metrics with Sharpe Ratio & Drawdown
 @app.callback(
     Output('performance-chart', 'figure'),
     Input('interval', 'n_intervals')
@@ -290,6 +398,8 @@ def update_orders(n):
 def update_performance(n):
     df = fetch_bitstamp_candles(limit=1000, step=60)
     df['RSI'] = compute_rsi(df['close'], window=14)
+    df['MACD'], df['MACD_Signal'], df['MACD_Hist'] = compute_macd(df['close'])
+    df['SMA50'] = compute_sma(df['close'], window=50)
 
     trades = []
     in_position = False
@@ -298,45 +408,89 @@ def update_performance(n):
     for ts, row in df.iterrows():
         price = row['close']
         rsi = row['RSI']
-        if not in_position and rsi <= 30:
+        macd_hist = row['MACD_Hist']
+        sma50 = row['SMA50']
+        
+        # Improved entry logic with multi-indicator confirmation
+        if not in_position and rsi <= 30 and macd_hist > 0 and price > sma50:
             in_position = True
             buy_price = price
             buy_time = ts
-        elif in_position and rsi >= 70:
+        
+        # Improved exit logic with multi-indicator confirmation
+        elif in_position and rsi >= 70 and macd_hist < 0 and price < sma50:
             ret = (price - buy_price) / buy_price * 100
             trades.append({
                 'buy_time': buy_time,
                 'sell_time': ts,
-                'return': ret
+                'return': ret,
+                'entry_price': buy_price,
+                'exit_price': price
             })
             in_position = False
 
     trades_df = pd.DataFrame(trades)
     if trades_df.empty:
-        return go.Figure()
+        fig = go.Figure()
+        fig.add_annotation(text="No trades executed", showarrow=False)
+        return fig
 
+    # Calculate performance metrics
     trades_df['cumulative'] = trades_df['return'].cumsum()
+    
+    # Win rate
     wins = int((trades_df['return'] > 0).sum())
     losses = int((trades_df['return'] <= 0).sum())
+    total_trades = len(trades_df)
+    win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+    
+    # Average return per trade
+    avg_return = trades_df['return'].mean()
+    
+    # Sharpe Ratio (assuming 252 trading days, risk-free rate ≈ 0)
+    returns = trades_df['return'].values
+    sharpe_ratio = (returns.mean() / (returns.std() + 1e-8)) * np.sqrt(252) if len(returns) > 1 else 0
+    
+    # Maximum Drawdown
+    cumulative = trades_df['cumulative'].values
+    running_max = np.maximum.accumulate(cumulative)
+    drawdown = (cumulative - running_max)
+    max_drawdown = drawdown.min()
+    
+    # Profit Factor (gross profit / gross loss)
+    gross_profit = trades_df[trades_df['return'] > 0]['return'].sum()
+    gross_loss = abs(trades_df[trades_df['return'] <= 0]['return'].sum())
+    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 0
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=trades_df['sell_time'],
         y=trades_df['return'],
         marker_color=['green' if r>0 else 'red' for r in trades_df['return']],
-        name='Trade Return (%)'
+        name='Trade Return (%)',
+        hovertemplate='<b>%{x}</b><br>Return: %{y:.2f}%<extra></extra>'
     ))
     fig.add_trace(go.Scatter(
         x=trades_df['sell_time'],
         y=trades_df['cumulative'],
         mode='lines+markers',
         name='Cumulative P&L (%)',
-        yaxis='y2'
+        yaxis='y2',
+        line=dict(color='blue', width=2),
+        hovertemplate='<b>%{x}</b><br>Cumulative P&L: %{y:.2f}%<extra></extra>'
     ))
 
+    # Title with key metrics
+    title_text = (
+        f"Improved RSI Strategy Performance<br>"
+        f"<sub>Trades: {total_trades} | Win Rate: {win_rate:.1f}% ({wins}W/{losses}L) | "
+        f"Avg Return: {avg_return:.2f}% | Sharpe Ratio: {sharpe_ratio:.2f} | "
+        f"Max Drawdown: {max_drawdown:.2f}% | Profit Factor: {profit_factor:.2f}</sub>"
+    )
+
     fig.update_layout(
-        title=f"RSI Strategy Returns — Wins: {wins}  Losses: {losses}",
-        xaxis=dict(title="Sell Time"),
+        title=title_text,
+        xaxis=dict(title="Exit Time"),
         yaxis=dict(title="Return per Trade (%)"),
         yaxis2=dict(
             title="Cumulative P&L (%)",
@@ -346,7 +500,8 @@ def update_performance(n):
         legend=dict(x=0.01, y=0.99),
         paper_bgcolor=brand_colors['background'],
         plot_bgcolor=brand_colors['background'],
-        font_color=brand_colors['text']
+        font_color=brand_colors['text'],
+        hovermode='x unified'
     )
 
     return fig
