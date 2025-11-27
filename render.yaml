@@ -1,0 +1,83 @@
+services:
+  - type: web
+    name: btc-trading-bot-web
+    env: python
+    region: oregon
+    plan: standard
+    buildCommand: pip install -r requirements.txt
+    startCommand: python init_db.py && gunicorn app:server --workers 2 --worker-class sync --timeout 120 --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: TRADING_ENABLED
+        value: "true"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: PORT
+        value: "10000"
+      - key: ALPACA_PAPER
+        value: "true"
+      - key: DEBUG
+        value: "false"
+      - key: ALPACA_API_KEY
+        sync: false
+      - key: ALPACA_SECRET_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: trading-bot-db
+
+  - type: worker
+    name: btc-trading-bot-scheduler
+    env: python
+    region: oregon
+    plan: standard
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -u -c "from app import scheduler; import time; print('Trading bot scheduler started'); [time.sleep(1) for _ in iter(int, 1)]"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: TRADING_ENABLED
+        value: "true"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: ALPACA_PAPER
+        value: "true"
+      - key: DEBUG
+        value: "false"
+      - key: ALPACA_API_KEY
+        sync: false
+      - key: ALPACA_SECRET_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: trading-bot-db
+
+databases:
+  - name: trading-bot-db
+    databaseName: trading_bot_db
+    plan: standard
+    region: oregon
+    postgresVersion: 15
+
+envVarGroups:
+  - name: trading-strategy
+    envVars:
+      - key: RSI_WINDOW
+        value: "14"
+      - key: RSI_OVERSOLD
+        value: "30"
+      - key: RSI_OVERBOUGHT
+        value: "70"
+      - key: SMA_WINDOW
+        value: "50"
+      - key: ATR_WINDOW
+        value: "14"
+      - key: VOLATILITY_THRESHOLD
+        value: "5.0"
+      - key: RISK_PERCENT_PER_TRADE
+        value: "1.0"
+      - key: STOP_LOSS_PERCENT
+        value: "3.0"
+      - key: TRADING_INTERVAL_MINUTES
+        value: "1"

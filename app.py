@@ -11,6 +11,11 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
 import logging
 import requests
+from dotenv import load_dotenv
+from sqlalchemy.orm import Session
+
+# Load environment variables
+load_dotenv()
 
 # Alpaca clients
 from alpaca.trading.client import TradingClient
@@ -18,17 +23,55 @@ from alpaca.trading.stream import TradingStream
 from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
 from alpaca.trading.requests import MarketOrderRequest
 
-# --- Configuration ---
-API_KEY    = os.getenv('ALPACA_KEY') or os.getenv('ALPACA_API_KEY') or "PK93LZQTSB35L3CL60V5"
-API_SECRET = os.getenv('ALPACA_SECRET') or os.getenv('ALPACA_SECRET_KEY') or "HDn7c1Mp3JVvgq98dphRDJH1nt3She3pe5Y9bJi0"
-trade_client = TradingClient(API_KEY, API_SECRET, paper=True)
+# Database
+from database import Trade, Order, PerformanceMetric, AccountBalance, init_db, get_session
+
+# --- Configuration from Environment ---
+API_KEY = os.getenv('ALPACA_API_KEY')
+API_SECRET = os.getenv('ALPACA_SECRET_KEY')
+ALPACA_PAPER = os.getenv('ALPACA_PAPER', 'true').lower() == 'true'
+DATABASE_URL = os.getenv('DATABASE_URL')
+
+# Validate required environment variables
+if not API_KEY or not API_SECRET:
+    raise ValueError("ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in environment variables")
+
+trade_client = TradingClient(API_KEY, API_SECRET, paper=ALPACA_PAPER)
 
 # Symbols
 BITSTAMP_URL = "https://www.bitstamp.net/api/v2/ohlc/btcusd/"
 ALPACA_SYMBOL = "BTC/USD"
 
+# --- Strategy Parameters from Environment ---
+RSI_WINDOW = int(os.getenv('RSI_WINDOW', 14))
+RSI_OVERSOLD = int(os.getenv('RSI_OVERSOLD', 30))
+RSI_OVERBOUGHT = int(os.getenv('RSI_OVERBOUGHT', 70))
+SMA_WINDOW = int(os.getenv('SMA_WINDOW', 50))
+ATR_WINDOW = int(os.getenv('ATR_WINDOW', 14))
+VOLATILITY_THRESHOLD = float(os.getenv('VOLATILITY_THRESHOLD', 5.0))
+RISK_PERCENT_PER_TRADE = float(os.getenv('RISK_PERCENT_PER_TRADE', 1.0))
+STOP_LOSS_PERCENT = float(os.getenv('STOP_LOSS_PERCENT', 3.0))
+TRADING_ENABLED = os.getenv('TRADING_ENABLED', 'true').lower() == 'true'
+TRADING_INTERVAL_MINUTES = int(os.getenv('TRADING_INTERVAL_MINUTES', 1))
+
 # Set up logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s:%(message)s")
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+# Initialize database
+try:
+    if DATABASE_URL:
+        engine = init_db()
+        logger.info("Database initialized successfully")
+    else:
+        logger.warning("DATABASE_URL not set - using in-memory storage (not recommended for production)")
+except Exception as e:
+    logger.error(f"Failed to initialize database: {e}")
+    raise
 
 # --- Streaming Order Updates ---
 trade_updates_list = []
@@ -37,15 +80,36 @@ async def trade_updates_handler(update):
     try:
         event = update.event
         order = update.order
-        trade_updates_list.append({
+        trade_update = {
             'event': event,
             'symbol': order.symbol,
             'filled_qty': order.filled_qty,
             'filled_avg_price': order.filled_avg_price,
             'timestamp': update.timestamp
-        })
+        }
+        trade_updates_list.append(trade_update)
+        
+        # Save to database if DATABASE_URL is set
+        if DATABASE_URL:
+            try:
+                session = get_session()
+                db_order = Order(
+                    alpaca_order_id=order.id,
+                    symbol=order.symbol,
+                    side=str(order.side),
+                    quantity=float(order.qty),
+                    filled_qty=float(order.filled_qty),
+                    filled_avg_price=float(order.filled_avg_price) if order.filled_avg_price else None,
+                    event=event,
+                    status='filled' if float(order.filled_qty) > 0 else 'pending'
+                )
+                session.add(db_order)
+                session.commit()
+                session.close()
+            except Exception as e:
+                logger.error(f"Failed to save order to database: {e}")
     except Exception as e:
-        logging.error(f"Stream handler error: {e}")
+        logger.error(f"Stream handler error: {e}")
 
 def start_trade_stream():
     stream = TradingStream(API_KEY, API_SECRET, paper=True)
@@ -98,23 +162,74 @@ def fetch_bitstamp_candles(limit=1000, step=60):
 # --- Improved RSI Trading Strategy with Risk Management ---
 active_trades = {}  # Track open positions for stop-loss management
 
-def calculate_position_size(account_balance, risk_percent=1.0):
+def calculate_position_size(account_balance, risk_percent=None):
     """
-    Kelly Criterion adapted approach: Risk 1% of account per trade.
+    Kelly Criterion adapted approach: Risk configurable percentage of account per trade.
     Conservative compared to full Kelly to avoid drawdowns.
     """
+    if risk_percent is None:
+        risk_percent = RISK_PERCENT_PER_TRADE
     return (account_balance * risk_percent) / 100
 
+def save_trade_to_db(trade_data):
+    """Save trade to database"""
+    if not DATABASE_URL:
+        return
+    
+    try:
+        session = get_session()
+        trade = Trade(
+            symbol=trade_data['symbol'],
+            entry_price=trade_data['entry_price'],
+            exit_price=trade_data.get('exit_price'),
+            entry_time=trade_data['entry_time'],
+            exit_time=trade_data.get('exit_time'),
+            quantity=trade_data['quantity'],
+            return_percent=trade_data.get('return_percent'),
+            profit_loss=trade_data.get('profit_loss'),
+            stop_loss_price=trade_data.get('stop_loss_price'),
+            status=trade_data.get('status', 'open'),
+            rsi_at_entry=trade_data.get('rsi_at_entry')
+        )
+        session.add(trade)
+        session.commit()
+        session.close()
+        logger.info(f"Trade saved to database: {trade}")
+    except Exception as e:
+        logger.error(f"Failed to save trade to database: {e}")
+
+def save_account_balance_to_db(cash, portfolio_value, buying_power=None):
+    """Save account balance snapshot to database"""
+    if not DATABASE_URL:
+        return
+    
+    try:
+        session = get_session()
+        balance = AccountBalance(
+            cash=cash,
+            portfolio_value=portfolio_value,
+            buying_power=buying_power
+        )
+        session.add(balance)
+        session.commit()
+        session.close()
+    except Exception as e:
+        logger.error(f"Failed to save account balance to database: {e}")
+
 def rsi_trading_job():
+    if not TRADING_ENABLED:
+        logger.info("Trading is disabled")
+        return
+    
     try:
         df = fetch_bitstamp_candles(limit=1000, step=60)
         df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
         
         # Compute technical indicators
-        df['RSI'] = compute_rsi(df['close'], window=14)
+        df['RSI'] = compute_rsi(df['close'], window=RSI_WINDOW)
         df['MACD'], df['MACD_Signal'], df['MACD_Hist'] = compute_macd(df['close'])
-        df['ATR'] = compute_atr(df['high'], df['low'], df['close'], window=14)
-        df['SMA50'] = compute_sma(df['close'], window=50)
+        df['ATR'] = compute_atr(df['high'], df['low'], df['close'], window=ATR_WINDOW)
+        df['SMA50'] = compute_sma(df['close'], window=SMA_WINDOW)
         
         last_rsi = df['RSI'].iloc[-1]
         last_macd_hist = df['MACD_Hist'].iloc[-1]
@@ -127,25 +242,23 @@ def rsi_trading_job():
         usd_avail = float(account.cash)
         account_balance = float(account.portfolio_value)
         
-        logging.info(f"Price: ${price:.2f} | RSI: {last_rsi:.2f} | ATR: {last_atr:.2f} ({volatility_pct:.2f}%) | SMA50: ${sma50:.2f}")
+        # Save account balance snapshot
+        save_account_balance_to_db(usd_avail, account_balance, float(account.buying_power))
+        
+        logger.info(f"Price: ${price:.2f} | RSI: {last_rsi:.2f} | ATR: {last_atr:.2f} ({volatility_pct:.2f}%) | SMA50: ${sma50:.2f}")
         
         # --- BUY SIGNAL CONDITIONS ---
-        # 1. RSI oversold (≤ 30)
-        # 2. MACD histogram positive (bullish momentum)
-        # 3. Price above SMA50 (uptrend confirmation)
-        # 4. Volatility reasonable (< 5% ATR to avoid extremes)
         buy_signal = (
-            last_rsi <= 30 and 
+            last_rsi <= RSI_OVERSOLD and 
             last_macd_hist > 0 and 
             price > sma50 and 
-            volatility_pct < 5.0
+            volatility_pct < VOLATILITY_THRESHOLD
         )
         
         if buy_signal and usd_avail >= 5:
-            logging.info(f"🟢 BUY SIGNAL: RSI={last_rsi:.2f}, MACD={last_macd_hist:.4f}, Price>${price:.2f} > SMA50${sma50:.2f}")
+            logger.info(f"🟢 BUY SIGNAL: RSI={last_rsi:.2f}, MACD={last_macd_hist:.4f}, Price${price:.2f} > SMA50${sma50:.2f}")
             
-            # Risk 1% of portfolio
-            target_usd = min(calculate_position_size(account_balance, risk_percent=1.0), usd_avail)
+            target_usd = min(calculate_position_size(account_balance, RISK_PERCENT_PER_TRADE), usd_avail)
             buy_qty = round(target_usd / price - 1e-8, 8)
             
             if buy_qty > 0:
@@ -158,23 +271,31 @@ def rsi_trading_job():
                 )
                 resp = trade_client.submit_order(order_data=mo)
                 
-                # Track this trade for stop-loss
-                stop_loss_price = price * 0.97  # 3% stop-loss
+                stop_loss_price = price * (1 - STOP_LOSS_PERCENT / 100)
                 active_trades[ALPACA_SYMBOL] = {
                     'entry_price': price,
                     'entry_qty': buy_qty,
                     'stop_loss': stop_loss_price,
-                    'timestamp': datetime.now(ZoneInfo('America/New_York'))
+                    'timestamp': datetime.now(ZoneInfo('America/New_York')),
+                    'rsi_at_entry': last_rsi
                 }
                 
-                logging.info(f"BUY executed: +{buy_qty} BTC @ ${price:.2f} | Stop-Loss: ${stop_loss_price:.2f} | Risk: ${target_usd:.2f}")
+                # Save trade to database
+                save_trade_to_db({
+                    'symbol': ALPACA_SYMBOL,
+                    'entry_price': price,
+                    'entry_time': datetime.now(ZoneInfo('America/New_York')),
+                    'quantity': buy_qty,
+                    'stop_loss_price': stop_loss_price,
+                    'status': 'open',
+                    'rsi_at_entry': last_rsi
+                })
+                
+                logger.info(f"BUY executed: +{buy_qty} BTC @ ${price:.2f} | Stop-Loss: ${stop_loss_price:.2f} | Risk: ${target_usd:.2f}")
         
         # --- SELL SIGNAL CONDITIONS ---
-        # 1. RSI overbought (≥ 70)
-        # 2. MACD histogram negative (bearish momentum)
-        # 3. Price below SMA50 (downtrend confirmation)
         sell_signal = (
-            last_rsi >= 70 and 
+            last_rsi >= RSI_OVERBOUGHT and 
             last_macd_hist < 0 and 
             price < sma50
         )
@@ -185,7 +306,7 @@ def rsi_trading_job():
             btc_pos = next((p for p in positions if p.symbol == clean_symbol), None)
             
             if btc_pos:
-                logging.info(f"🔴 SELL SIGNAL: RSI={last_rsi:.2f}, MACD={last_macd_hist:.4f}, Price${price:.2f} < SMA50${sma50:.2f}")
+                logger.info(f"🔴 SELL SIGNAL: RSI={last_rsi:.2f}, MACD={last_macd_hist:.4f}, Price${price:.2f} < SMA50${sma50:.2f}")
                 sell_qty = round(float(btc_pos.qty) - 1e-8, 8)
                 
                 mo = MarketOrderRequest(
@@ -196,13 +317,12 @@ def rsi_trading_job():
                     qty=sell_qty
                 )
                 resp = trade_client.submit_order(order_data=mo)
-                logging.info(f"SELL executed: -{sell_qty} BTC @ ${price:.2f}")
+                logger.info(f"SELL executed: -{sell_qty} BTC @ ${price:.2f}")
                 
                 if ALPACA_SYMBOL in active_trades:
                     del active_trades[ALPACA_SYMBOL]
         
         # --- STOP-LOSS CHECK ---
-        # Exit position if price hits stop-loss (risk management)
         if ALPACA_SYMBOL in active_trades:
             trade = active_trades[ALPACA_SYMBOL]
             if price <= trade['stop_loss']:
@@ -212,7 +332,7 @@ def rsi_trading_job():
                 
                 if btc_pos:
                     loss_pct = ((price - trade['entry_price']) / trade['entry_price']) * 100
-                    logging.warning(f"🛑 STOP-LOSS TRIGGERED: Price ${price:.2f} <= Stop ${trade['stop_loss']:.2f} | Loss: {loss_pct:.2f}%")
+                    logger.warning(f"🛑 STOP-LOSS TRIGGERED: Price ${price:.2f} <= Stop ${trade['stop_loss']:.2f} | Loss: {loss_pct:.2f}%")
                     
                     sell_qty = round(float(btc_pos.qty) - 1e-8, 8)
                     mo = MarketOrderRequest(
@@ -223,20 +343,22 @@ def rsi_trading_job():
                         qty=sell_qty
                     )
                     resp = trade_client.submit_order(order_data=mo)
-                    logging.info(f"Stop-loss SELL executed: -{sell_qty} BTC @ ${price:.2f}")
+                    logger.info(f"Stop-loss SELL executed: -{sell_qty} BTC @ ${price:.2f}")
                     
                     del active_trades[ALPACA_SYMBOL]
         
         else:
-            logging.info("No trade signal (insufficient confluence or high volatility)")
+            logger.debug("No trade signal (insufficient confluence or high volatility)")
 
     except Exception as e:
-        logging.error(f"RSI trading job error: {e}")
+        logger.error(f"RSI trading job error: {e}", exc_info=True)
 
-# Schedule RSI job every minute
+# Schedule RSI job with configurable interval
 scheduler = BackgroundScheduler(timezone='US/Eastern')
-scheduler.add_job(rsi_trading_job, 'interval', minutes=1)
+scheduler.add_job(rsi_trading_job, 'interval', minutes=TRADING_INTERVAL_MINUTES)
 scheduler.start()
+
+logger.info(f"Scheduler started: RSI trading job every {TRADING_INTERVAL_MINUTES} minute(s)")
 
 # --- Dash App Setup ---
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
