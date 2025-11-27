@@ -241,45 +241,144 @@ scheduler.start()
 # --- Dash App Setup ---
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
 server = app.server
-brand_colors = {'background': '#2C3E50', 'text': '#ECF0F1'}
+
+# Modern color scheme
+brand_colors = {
+    'background': '#0f1419',
+    'text': '#e0e6ed',
+    'accent': '#1f77b4',
+    'success': '#00ff41',
+    'danger': '#ff4444'
+}
 
 app.layout = dbc.Container([
-    html.H2('Crypto Dashboard (BTC/USD)', style={'color': brand_colors['text']}),
+    html.Div(
+        children=[
+            html.H1(
+                '₿ Crypto Trading Dashboard',
+                style={
+                    'color': brand_colors['text'],
+                    'textAlign': 'center',
+                    'marginBottom': '10px',
+                    'fontSize': '2.5rem',
+                    'fontWeight': 'bold',
+                    'letterSpacing': '2px'
+                }
+            ),
+            html.P(
+                'Advanced RSI Strategy with Multi-Indicator Confirmation',
+                style={
+                    'color': '#888888',
+                    'textAlign': 'center',
+                    'marginBottom': '30px',
+                    'fontSize': '1.1rem'
+                }
+            )
+        ],
+        style={'marginBottom': '40px'}
+    ),
 
     dbc.Row([
         dbc.Col([
-            html.Label('BTC Qty', style={'color': brand_colors['text']}),
-            dcc.Input(id='btc-qty', type='number', value=0.5, step=0.1),
-            html.Br(), html.Br(),
-            dbc.Button('Buy', id='buy-btc', color='success', className='me-2'),
-            dbc.Button('Sell', id='sell-btc', color='danger'),
-            html.Br(), html.Br(),
-            html.Div(id='order-status', style={'color': brand_colors['text']})
-        ], width=3),
-        dbc.Col(dcc.Graph(id='price-chart'), width=9)
-    ]),
+            dbc.Card([
+                dbc.CardBody([
+                    html.H5('Quick Trade', style={'color': brand_colors['text'], 'marginBottom': '15px'}),
+                    html.Label('BTC Quantity', style={'color': brand_colors['text'], 'fontWeight': 'bold'}),
+                    dcc.Input(
+                        id='btc-qty',
+                        type='number',
+                        value=0.5,
+                        step=0.1,
+                        style={
+                            'width': '100%',
+                            'padding': '8px',
+                            'marginBottom': '15px',
+                            'backgroundColor': '#16213e',
+                            'color': brand_colors['text'],
+                            'border': '1px solid #404040',
+                            'borderRadius': '4px'
+                        }
+                    ),
+                    dbc.Row([
+                        dbc.Col(dbc.Button(
+                            '🔷 BUY', id='buy-btc', color='success',
+                            className='w-100',
+                            style={'backgroundColor': brand_colors['success'], 'color': '#000', 'fontWeight': 'bold'}
+                        )),
+                        dbc.Col(dbc.Button(
+                            '🔶 SELL', id='sell-btc', color='danger',
+                            className='w-100',
+                            style={'backgroundColor': brand_colors['danger'], 'color': '#fff', 'fontWeight': 'bold'}
+                        ))
+                    ], className='g-2'),
+                    html.Div(
+                        id='order-status',
+                        style={
+                            'color': brand_colors['text'],
+                            'marginTop': '15px',
+                            'fontSize': '0.9rem',
+                            'textAlign': 'center'
+                        }
+                    )
+                ])
+            ], style={'backgroundColor': '#16213e', 'borderColor': '#404040'})
+        ], width=12, lg=3, className='mb-4'),
+        dbc.Col(dcc.Graph(id='price-chart'), width=12, lg=9, className='mb-4')
+    ], className='g-4'),
 
-    dbc.Row(dcc.Graph(id='rsi-chart'), className='mt-4'),
+    dbc.Row(dcc.Graph(id='rsi-chart'), className='mt-2 g-4'),
 
-    # ← New performance panel
-    dbc.Row(dcc.Graph(id='performance-chart'), className='mt-4'),
+    dbc.Row(dcc.Graph(id='performance-chart'), className='mt-2 g-4'),
 
     dcc.Interval(id='interval', interval=30*1000, n_intervals=0),
 
-    dbc.Row(dbc.Col(dash_table.DataTable(
-        id='positions-table', page_size=10,
-        style_header={'backgroundColor': brand_colors['background'], 'color': brand_colors['text']},
-        style_cell={'backgroundColor': brand_colors['background'], 'color': brand_colors['text']}
-    )), className='mt-4'),
+    dbc.Row([
+        dbc.Col([
+            html.H5('Positions', style={'color': brand_colors['text'], 'marginBottom': '15px'}),
+            dash_table.DataTable(
+                id='positions-table',
+                page_size=10,
+                style_header={
+                    'backgroundColor': '#16213e',
+                    'color': brand_colors['text'],
+                    'fontWeight': 'bold',
+                    'border': '1px solid #404040'
+                },
+                style_cell={
+                    'backgroundColor': '#0f1419',
+                    'color': brand_colors['text'],
+                    'border': '1px solid #404040',
+                    'padding': '12px',
+                    'textAlign': 'center'
+                },
+                style_data={'height': '35px'}
+            )
+        ], className='mt-4')
+    ], className='g-4'),
 
-    html.H4('Order Stream', style={'color': brand_colors['text'], 'marginTop': '20px'}),
-    dbc.Row(dbc.Col(dash_table.DataTable(
-        id='orders-table', page_size=10,
-        style_header={'backgroundColor': brand_colors['background'], 'color': brand_colors['text']},
-        style_cell={'backgroundColor': brand_colors['background'], 'color': brand_colors['text']}
-    )), className='mt-2')
+    html.H5('Order Stream', style={'color': brand_colors['text'], 'marginTop': '30px', 'marginBottom': '15px'}),
+    dbc.Row([
+        dbc.Col(dash_table.DataTable(
+            id='orders-table',
+            page_size=10,
+            style_header={
+                'backgroundColor': '#16213e',
+                'color': brand_colors['text'],
+                'fontWeight': 'bold',
+                'border': '1px solid #404040'
+            },
+            style_cell={
+                'backgroundColor': '#0f1419',
+                'color': brand_colors['text'],
+                'border': '1px solid #404040',
+                'padding': '12px',
+                'textAlign': 'center'
+            },
+            style_data={'height': '35px'}
+        ))
+    ], className='g-4 mb-5')
 
-], fluid=True, style={'backgroundColor': brand_colors['background'], 'padding': '20px'})
+], fluid=True, style={'backgroundColor': brand_colors['background'], 'padding': '30px', 'minHeight': '100vh'})
 
 # --- Callbacks ---
 @app.callback(
@@ -289,19 +388,66 @@ app.layout = dbc.Container([
 def update_price(n):
     df = fetch_bitstamp_candles(limit=1000, step=60)
     display_idx = pd.to_datetime(df.index).tz_localize('UTC').tz_convert('America/New_York')
-    fig = go.Figure(data=[go.Candlestick(
+    
+    # Add SMA50 for reference
+    df['SMA50'] = compute_sma(df['close'], window=50)
+    
+    fig = go.Figure()
+    
+    # Candlestick chart
+    fig.add_trace(go.Candlestick(
         x=display_idx,
         open=df['open'], high=df['high'],
         low=df['low'], close=df['close'],
-        increasing_line_color='green',
-        decreasing_line_color='red'
-    )])
+        name='BTC/USD',
+        increasing_line_color='#00ff41',
+        decreasing_line_color='#ff4444',
+        increasing_fillcolor='#00cc33',
+        decreasing_fillcolor='#cc0000',
+        hovertext=[f"O: ${o:.2f}<br>H: ${h:.2f}<br>L: ${l:.2f}<br>C: ${c:.2f}" 
+                  for o, h, l, c in zip(df['open'], df['high'], df['low'], df['close'])],
+        hoverinfo='x+text'
+    ))
+    
+    # SMA50 line
+    fig.add_trace(go.Scatter(
+        x=display_idx,
+        y=df['SMA50'],
+        mode='lines',
+        name='SMA50',
+        line=dict(color='#FFA500', width=2, dash='dash'),
+        hovertemplate='<b>SMA50</b><br>%{y:.2f}<extra></extra>'
+    ))
+    
     fig.update_layout(
-        paper_bgcolor=brand_colors['background'],
-        plot_bgcolor=brand_colors['background'],
-        font_color=brand_colors['text'],
+        title=dict(text='<b>Bitcoin Price (BTC/USD)</b>', font=dict(size=18)),
+        paper_bgcolor='#1a1a2e',
+        plot_bgcolor='#16213e',
+        font=dict(color='#eaeaea', family='Arial, sans-serif', size=11),
+        xaxis=dict(
+            title='<b>Time (ET)</b>',
+            tickformat='%H:%M<br>%b %d',
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='#404040',
+            showline=True,
+            linewidth=1,
+            linecolor='#404040'
+        ),
+        yaxis=dict(
+            title='<b>Price (USD)</b>',
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='#404040',
+            showline=True,
+            linewidth=1,
+            linecolor='#404040'
+        ),
         xaxis_rangeslider_visible=False,
-        xaxis=dict(title='Time (ET)', tickformat='%H:%M\n%b %d')
+        hovermode='x unified',
+        legend=dict(x=0.01, y=0.99, bgcolor='rgba(0,0,0,0.5)', bordercolor='#404040', borderwidth=1),
+        margin=dict(l=60, r=60, t=60, b=60),
+        height=500
     )
     return fig
 
@@ -313,18 +459,66 @@ def update_rsi_chart(n):
     df = fetch_bitstamp_candles(limit=1000, step=60)
     df['RSI'] = compute_rsi(df['close'], window=14)
     display_idx = pd.to_datetime(df.index).tz_localize('UTC').tz_convert('America/New_York')
-    fig = go.Figure(data=[go.Scatter(
+    
+    fig = go.Figure()
+    
+    # RSI line
+    fig.add_trace(go.Scatter(
         x=display_idx,
         y=df['RSI'],
         mode='lines',
-        name='RSI'
-    )])
+        name='RSI(14)',
+        line=dict(color='#1f77b4', width=2.5),
+        fill='tozeroy',
+        fillcolor='rgba(31, 119, 180, 0.2)',
+        hovertemplate='<b>RSI</b><br>%{y:.2f}<extra></extra>'
+    ))
+    
+    # Overbought zone (RSI >= 70)
+    fig.add_hrect(y0=70, y1=100, fillcolor='#ff4444', opacity=0.1, 
+                  layer='below', line_width=0, name='Overbought')
+    fig.add_hline(y=70, line_dash='dash', line_color='#ff4444', line_width=1, 
+                  annotation_text='Overbought (70)', annotation_position='right')
+    
+    # Oversold zone (RSI <= 30)
+    fig.add_hrect(y0=0, y1=30, fillcolor='#00ff41', opacity=0.1,
+                  layer='below', line_width=0, name='Oversold')
+    fig.add_hline(y=30, line_dash='dash', line_color='#00ff41', line_width=1,
+                  annotation_text='Oversold (30)', annotation_position='right')
+    
+    # Middle line (neutral)
+    fig.add_hline(y=50, line_dash='dot', line_color='#888888', line_width=1, opacity=0.5)
+    
     fig.update_layout(
-        paper_bgcolor=brand_colors['background'],
-        plot_bgcolor=brand_colors['background'],
-        font_color=brand_colors['text'],
-        yaxis=dict(range=[0,100]),
-        xaxis=dict(title='Time (ET)', tickformat='%H:%M\n%b %d')
+        title=dict(text='<b>RSI(14) - Relative Strength Index</b>', font=dict(size=18)),
+        paper_bgcolor='#1a1a2e',
+        plot_bgcolor='#16213e',
+        font=dict(color='#eaeaea', family='Arial, sans-serif', size=11),
+        xaxis=dict(
+            title='<b>Time (ET)</b>',
+            tickformat='%H:%M<br>%b %d',
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='#404040',
+            showline=True,
+            linewidth=1,
+            linecolor='#404040'
+        ),
+        yaxis=dict(
+            title='<b>RSI Value</b>',
+            range=[0, 100],
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='#404040',
+            showline=True,
+            linewidth=1,
+            linecolor='#404040'
+        ),
+        hovermode='x unified',
+        legend=dict(x=0.01, y=0.99, bgcolor='rgba(0,0,0,0.5)', bordercolor='#404040', borderwidth=1),
+        margin=dict(l=60, r=60, t=60, b=60),
+        height=400,
+        showlegend=False
     )
     return fig
 
@@ -463,45 +657,75 @@ def update_performance(n):
     profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 0
 
     fig = go.Figure()
+    
     fig.add_trace(go.Bar(
         x=trades_df['sell_time'],
         y=trades_df['return'],
-        marker_color=['green' if r>0 else 'red' for r in trades_df['return']],
+        marker_color=['#00ff41' if r>0 else '#ff4444' for r in trades_df['return']],
+        marker_line=dict(color=['#00cc33' if r>0 else '#cc0000' for r in trades_df['return']], width=1.5),
         name='Trade Return (%)',
-        hovertemplate='<b>%{x}</b><br>Return: %{y:.2f}%<extra></extra>'
+        hovertemplate='<b>%{x}</b><br>Return: %{y:.2f}%<extra></extra>',
+        opacity=0.8
     ))
+    
     fig.add_trace(go.Scatter(
         x=trades_df['sell_time'],
         y=trades_df['cumulative'],
         mode='lines+markers',
         name='Cumulative P&L (%)',
         yaxis='y2',
-        line=dict(color='blue', width=2),
-        hovertemplate='<b>%{x}</b><br>Cumulative P&L: %{y:.2f}%<extra></extra>'
+        line=dict(color='#1f77b4', width=3),
+        marker=dict(size=8, color='#1f77b4', line=dict(color='#0d4a8e', width=2)),
+        hovertemplate='<b>%{x}</b><br>Cumulative P&L: %{y:.2f}%<extra></extra>',
+        fillcolor='rgba(31, 119, 180, 0.1)',
+        fill='tozeroy'
     ))
 
     # Title with key metrics
     title_text = (
-        f"Improved RSI Strategy Performance<br>"
+        f"<b>Improved RSI Strategy Performance</b><br>"
         f"<sub>Trades: {total_trades} | Win Rate: {win_rate:.1f}% ({wins}W/{losses}L) | "
         f"Avg Return: {avg_return:.2f}% | Sharpe Ratio: {sharpe_ratio:.2f} | "
         f"Max Drawdown: {max_drawdown:.2f}% | Profit Factor: {profit_factor:.2f}</sub>"
     )
 
     fig.update_layout(
-        title=title_text,
-        xaxis=dict(title="Exit Time"),
-        yaxis=dict(title="Return per Trade (%)"),
-        yaxis2=dict(
-            title="Cumulative P&L (%)",
-            overlaying='y',
-            side='right'
+        title=dict(text=title_text, font=dict(size=16)),
+        paper_bgcolor='#1a1a2e',
+        plot_bgcolor='#16213e',
+        font=dict(color='#eaeaea', family='Arial, sans-serif', size=11),
+        xaxis=dict(
+            title='<b>Exit Time</b>',
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='#404040',
+            showline=True,
+            linewidth=1,
+            linecolor='#404040'
         ),
-        legend=dict(x=0.01, y=0.99),
-        paper_bgcolor=brand_colors['background'],
-        plot_bgcolor=brand_colors['background'],
-        font_color=brand_colors['text'],
-        hovermode='x unified'
+        yaxis=dict(
+            title='<b>Return per Trade (%)</b>',
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='#404040',
+            showline=True,
+            linewidth=1,
+            linecolor='#404040'
+        ),
+        yaxis2=dict(
+            title='<b>Cumulative P&L (%)</b>',
+            overlaying='y',
+            side='right',
+            showgrid=False,
+            showline=True,
+            linewidth=1,
+            linecolor='#404040'
+        ),
+        legend=dict(x=0.01, y=0.99, bgcolor='rgba(0,0,0,0.5)', bordercolor='#404040', borderwidth=1),
+        margin=dict(l=70, r=70, t=100, b=70),
+        height=550,
+        hovermode='x unified',
+        dragmode='zoom'
     )
 
     return fig
